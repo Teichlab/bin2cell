@@ -1,0 +1,751 @@
+from __future__ import annotations
+
+from scanpy import read_10x_h5
+
+import json
+from pathlib import Path, PurePath
+from typing import BinaryIO, Literal
+import pandas as pd
+from matplotlib.image import imread
+
+#actual bin2cell dependencies start here
+#the ones above are for read_visium_hd()
+from stardist.plot import render_label
+import scipy.spatial
+import scipy.sparse
+import scipy.stats
+import anndata as ad
+import skimage
+import scanpy as sc
+import numpy as np
+import os
+
+from PIL import Image
+#setting needed so PIL can load the large TIFFs
+Image.MAX_IMAGE_PIXELS = None
+
+#setting needed so cv2 can load the large TIFFs
+os.environ["OPENCV_IO_MAX_IMAGE_PIXELS"] = str(2**40)
+import cv2
+
+#NOTE ON DIMENSIONS WITHIN ANNDATA AND BEYOND
+#.obs["array_row"] matches .obsm["spatial"][:,1] matches np.array image [:,0]
+#.obs["array_col"] matches .obsm["spatial"][:,0] matches np.array image [:,1]
+#array coords start relative to some magical point on the grid (seen bottom left/top right)
+#and can require flipping the array row or column to match the image orientation
+#row/col do seem to consistenly refer to the stated np.array image dimensions though
+#spatial starts in top left corner of image, matching what np.array image is doing
+#of note, cv2 treats [:,1] as dim 0 and [:,0] as dim 1, despite working on np.arrays
+
+def load_image(image_path, gray=False, dtype=np.uint8):
+    '''
+    Efficiently load an external image and return it as an RGB numpy array.
+    
+    Input
+    -----
+    image_path : ``filepath``
+        Path to image to be loaded.
+    gray : ``bool``, optional (default: ``False``)
+        Whether to turn image to grayscale before returning
+    dtype : ``numpy.dtype``, optional (default: ``numpy.uint8``)
+        Data type of the numpy array output.
+    '''
+    img = cv2.imread(image_path)
+    #loaded as BGR by default, turn to the expected RGB
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    #optionally turn to greyscale
+    if gray:
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    #copy=False means that there's no extra copy made if the dtype already matches
+    #which it will for np.uint8
+    return img.astype(dtype, copy=False)
+
+def normalize(img):
+    '''
+    Extremely naive reimplementation of default ``cbsdeep.utils.normalize()`` 
+    percentile normalisation, with a lower RAM footprint than the original.
+    
+    Input
+    -----
+    img : ``numpy.array``
+        Numpy array image to normalise
+    '''
+    eps = 1e-20
+    mi = np.percentile(img,3)
+    ma = np.percentile(img,99.8)
+    return ((img - mi) / ( ma - mi + eps ))
+
+def stardist(image_path, labels_npz_path, stardist_model="2D_versatile_he", block_size=4096, min_overlap=128, context=128, **kwargs):
+    '''
+    Segment an image with StarDist. Supports both the fluorescence and 
+    H&E models. The identified object labels will be converted to a 
+    sparse matrix and written to drive in ``.npz``.
+    
+    Input
+    -----
+    image_path : ``filepath``
+        Path to image to be segmented.
+    labels_npz_path : ``filepath``
+        Path to write object labels output. Can be easily loaded via 
+        ``scipy.sparse.load_npz()``.
+    stardist_model : ``str``, optional (default: ``"2D_versatile_he"``)
+        Use ``"2D_versatile_he"`` for segmenting H&E images or 
+        ``"2D_versatile_fluo"`` for segmenting GEX-derived single-channel 
+        images
+    block_size : ``int``, optional (default: 4096)
+        StarDist ``predict_instances_big()`` input. Length of square edge 
+        of the image to process as a single tile. 
+    min_overlap : ``int``, optional (default: 128)
+        StarDist ``predict_instances_big()`` input. Minimum overlap between 
+        adjacent tiles, in each dimension.
+    context : ``int``, optional (default: 128)
+        StarDist ``predict_instances_big()`` input. Amount of image context 
+        on all sides of a block, which is discarded.
+    kwargs
+        Any additional arguments to pass to StarDist. Practically most likely 
+        to be ``prob_thresh`` for controlling the stringency of calling 
+        objects.
+    '''
+    #using stardist models requires tensorflow, avoid global import
+    from stardist.models import StarDist2D
+    #load and percentile normalize image, following stardist demo protocol
+    #turn it to np.float16 pre normalisation to keep RAM footprint minimal
+    img = load_image(image_path, gray=(stardist_model=="2D_versatile_fluo"), dtype=np.float16)
+    img = normalize(img)
+    #use pretrained stardist model
+    model = StarDist2D.from_pretrained(stardist_model)
+    #will need to specify axes shortly, which are model dependent
+    if stardist_model == "2D_versatile_he":
+        #3D image, got the axes YXC from the H&E model config.json
+        model_axes = "YXC"
+    elif stardist_model == "2D_versatile_fluo":
+        #2D image, got the axes YX from logic and trying and it working
+        model_axes = "YX"
+    #run predict_instances_big() to perform automated tiling of the input
+    #this is less parameterised than predict_instances, needed to pass axes too
+    #pass any other **kwargs to the thing, passing them on internally
+    #in practice this is going to be prob_thresh
+    labels, _ = model.predict_instances_big(img, axes=model_axes, 
+                                            block_size=block_size, 
+                                            min_overlap=min_overlap, 
+                                            context=context, 
+                                            **kwargs
+                                           )
+    #store resulting labels as sparse matrix NPZ - super efficient space wise
+    labels_sparse = scipy.sparse.csr_matrix(labels)
+    scipy.sparse.save_npz(labels_npz_path, labels_sparse)
+    print("Found "+str(len(np.unique(labels_sparse.data)))+" objects")
+
+def view_stardist_labels(image_path, labels_npz_path, crop):
+    '''
+    Use StarDist's label rendering to view segmentation results in a crop 
+    of the input image.
+    
+    Input
+    -----
+    image_path : ``filepath``
+        Path to image that was segmented.
+    labels_npz_path : ``filepath``
+        Path to sparse labels generated by ``b2c.stardist()``.
+    crop : tuple of ``int``
+        A PIL-formatted crop specification - a four integer tuple, 
+        provided as (left, upper, right, lower) coordinates.
+    '''
+    #PIL is better at handling crops memory efficiently than cv2
+    img = Image.open(image_path)
+    img = img.crop(crop)
+    #stardist likes images on a 0-1 scale
+    img = np.array(img)/255
+    #load labels and subset to area of interest
+    #crop is (left, upper, right, lower)
+    #https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.Image.crop
+    labels_sparse = scipy.sparse.load_npz(labels_npz_path)
+    #upper:lower, left:right
+    labels_sparse = labels_sparse[crop[1]:crop[3], crop[0]:crop[2]]
+    labels = np.array(labels_sparse.todense())
+    return render_label(labels, img=img)
+
+#as PR'd to scanpy: https://github.com/scverse/scanpy/pull/2992
+def read_visium(
+    path: Path | str,
+    genome: str | None = None,
+    *,
+    count_file: str = "filtered_feature_bc_matrix.h5",
+    library_id: str | None = None,
+    load_images: bool | None = True,
+    source_image_path: Path | str | None = None,
+) -> AnnData:
+    """\
+    Read 10x-Genomics-formatted visum dataset.
+
+    In addition to reading regular 10x output,
+    this looks for the `spatial` folder and loads images,
+    coordinates and scale factors.
+    Based on the `Space Ranger output docs`_.
+
+    See :func:`~scanpy.pl.spatial` for a compatible plotting function.
+
+    .. _Space Ranger output docs: https://support.10xgenomics.com/spatial-gene-expression/software/pipelines/latest/output/overview
+
+    Parameters
+    ----------
+    path
+        Path to directory for visium datafiles.
+    genome
+        Filter expression to genes within this genome.
+    count_file
+        Which file in the passed directory to use as the count file. Typically would be one of:
+        'filtered_feature_bc_matrix.h5' or 'raw_feature_bc_matrix.h5'.
+    library_id
+        Identifier for the visium library. Can be modified when concatenating multiple adata objects.
+    source_image_path
+        Path to the high-resolution tissue image. Path will be included in
+        `.uns["spatial"][library_id]["metadata"]["source_image_path"]`.
+
+    Returns
+    -------
+    Annotated data matrix, where observations/cells are named by their
+    barcode and variables/genes by gene name. Stores the following information:
+
+    :attr:`~anndata.AnnData.X`
+        The data matrix is stored
+    :attr:`~anndata.AnnData.obs_names`
+        Cell names
+    :attr:`~anndata.AnnData.var_names`
+        Gene names for a feature barcode matrix, probe names for a probe bc matrix
+    :attr:`~anndata.AnnData.var`\\ `['gene_ids']`
+        Gene IDs
+    :attr:`~anndata.AnnData.var`\\ `['feature_types']`
+        Feature types
+    :attr:`~anndata.AnnData.obs`\\ `[filtered_barcodes]`
+        filtered barcodes if present in the matrix
+    :attr:`~anndata.AnnData.var`
+        Any additional metadata present in /matrix/features is read in.
+    :attr:`~anndata.AnnData.uns`\\ `['spatial']`
+        Dict of spaceranger output files with 'library_id' as key
+    :attr:`~anndata.AnnData.uns`\\ `['spatial'][library_id]['images']`
+        Dict of images (`'hires'` and `'lowres'`)
+    :attr:`~anndata.AnnData.uns`\\ `['spatial'][library_id]['scalefactors']`
+        Scale factors for the spots
+    :attr:`~anndata.AnnData.uns`\\ `['spatial'][library_id]['metadata']`
+        Files metadata: 'chemistry_description', 'software_version', 'source_image_path'
+    :attr:`~anndata.AnnData.obsm`\\ `['spatial']`
+        Spatial spot coordinates, usable as `basis` by :func:`~scanpy.pl.embedding`.
+    """
+    path = Path(path)
+    adata = read_10x_h5(path / count_file, genome=genome)
+
+    adata.uns["spatial"] = dict()
+
+    from h5py import File
+
+    with File(path / count_file, mode="r") as f:
+        attrs = dict(f.attrs)
+    if library_id is None:
+        library_id = str(attrs.pop("library_ids")[0], "utf-8")
+
+    adata.uns["spatial"][library_id] = dict()
+
+    if load_images:
+        tissue_positions_file = (
+            path / "spatial/tissue_positions.csv"
+            if (path / "spatial/tissue_positions.csv").exists()
+            else path / "spatial/tissue_positions.parquet" if (path / "spatial/tissue_positions.parquet").exists()
+            else path / "spatial/tissue_positions_list.csv"
+        )
+        files = dict(
+            tissue_positions_file=tissue_positions_file,
+            scalefactors_json_file=path / "spatial/scalefactors_json.json",
+            hires_image=path / "spatial/tissue_hires_image.png",
+            lowres_image=path / "spatial/tissue_lowres_image.png",
+        )
+
+        # check if files exists, continue if images are missing
+        for f in files.values():
+            if not f.exists():
+                if any(x in str(f) for x in ["hires_image", "lowres_image"]):
+                    logg.warning(
+                        f"You seem to be missing an image file.\n"
+                        f"Could not find '{f}'."
+                    )
+                else:
+                    raise OSError(f"Could not find '{f}'")
+
+        adata.uns["spatial"][library_id]["images"] = dict()
+        for res in ["hires", "lowres"]:
+            try:
+                adata.uns["spatial"][library_id]["images"][res] = imread(
+                    str(files[f"{res}_image"])
+                )
+            except Exception:
+                raise OSError(f"Could not find '{res}_image'")
+
+        # read json scalefactors
+        adata.uns["spatial"][library_id]["scalefactors"] = json.loads(
+            files["scalefactors_json_file"].read_bytes()
+        )
+
+        adata.uns["spatial"][library_id]["metadata"] = {
+            k: (str(attrs[k], "utf-8") if isinstance(attrs[k], bytes) else attrs[k])
+            for k in ("chemistry_description", "software_version")
+            if k in attrs
+        }
+
+        # read coordinates
+        if files["tissue_positions_file"].name.endswith(".csv"):
+            positions = pd.read_csv(
+                files["tissue_positions_file"],
+                header=0 if tissue_positions_file.name == "tissue_positions.csv" else None,
+                index_col=0,
+            )
+        elif files["tissue_positions_file"].name.endswith(".parquet"):
+            positions = pd.read_parquet(files["tissue_positions_file"])
+            #need to set the barcode to be the index
+            positions.set_index("barcode", inplace=True)
+        positions.columns = [
+            "in_tissue",
+            "array_row",
+            "array_col",
+            "pxl_col_in_fullres",
+            "pxl_row_in_fullres",
+        ]
+
+        adata.obs = adata.obs.join(positions, how="left")
+
+        adata.obsm["spatial"] = adata.obs[
+            ["pxl_row_in_fullres", "pxl_col_in_fullres"]
+        ].to_numpy()
+        adata.obs.drop(
+            columns=["pxl_row_in_fullres", "pxl_col_in_fullres"],
+            inplace=True,
+        )
+
+        # put image path in uns
+        if source_image_path is not None:
+            # get an absolute path
+            source_image_path = str(Path(source_image_path).resolve())
+            adata.uns["spatial"][library_id]["metadata"]["source_image_path"] = str(
+                source_image_path
+            )
+
+    return adata
+
+def destripe_counts(adata, n_counts_key="n_counts_adjusted"):
+    '''
+    Scale each row of ``adata.X`` to have ``n_counts_key`` rather than 
+    ``"n_counts"`` total counts.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin VisiumHD object. Raw counts, needs to have ``"n_counts"`` 
+        and ``n_counts_key`` in ``.obs``.
+    n_counts_key : ``str``
+        Name of ``.obs`` key storing the desired destriped counts per bin.
+    '''
+    #scanpy's utility function to make sure the anndata is not a view
+    #if it is a view then weird stuff happens when you try to write to its .X
+    sc._utils.view_to_actual(adata)
+    #adjust the count matrix to have n_counts_adjusted sum per bin (row)
+    #premultiplying by a diagonal matrix multiplies each row by a value: https://solitaryroad.com/c108.html
+    bin_scaling = scipy.sparse.diags(adata.obs[n_counts_key]/adata.obs["n_counts"])
+    adata.X = bin_scaling.dot(adata.X)
+
+def destripe(adata, quantile=0.95, adjust_counts=True):
+    '''
+    Correct the raw counts of the input object for known variable width of 
+    VisiumHD 2um bins. Scales the total UMIs per bin on a per-row and 
+    per-column basis, dividing by the specified ``quantile``. The resulting 
+    value is stored in ``.obs["destripe_factor"]``, and is multiplied by 
+    the corresponding total UMI ``quantile`` to get ``.obs["n_counts_adjusted"]``.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin VisiumHD object. Raw counts, needs to have ``"n_counts"`` in 
+        ``.obs``.
+    quantile : ``float``, optional (default: 0.95)
+        Which row/column quantile to use for the computation.
+    adjust_counts : ``bool``, optional (default: ``True``)
+        Whether to use the computed adjusted count total to adjust the counts in 
+        ``adata.X``.
+    '''
+    #apply destriping via sequential quantile scaling
+    quant = adata.obs.groupby("array_row")["n_counts"].quantile(quantile)
+    adata.obs["destripe_factor"] = adata.obs["n_counts"] / adata.obs["array_row"].map(quant)
+    quant = adata.obs.groupby("array_col")["destripe_factor"].quantile(quantile)
+    adata.obs["destripe_factor"] /= adata.obs["array_col"].map(quant)
+    #propose an adjusted n_counts as the global quantile multipled by the destripe factor
+    adata.obs["n_counts_adjusted"] = adata.obs["destripe_factor"] * np.quantile(adata.obs["n_counts"], quantile)
+    #correct the count space unless told not to
+    if adjust_counts:
+        destripe_counts(adata)
+
+def check_array_coordinates(adata):
+    '''
+    Assess the relationship between ``.obs["array_row"]``/``.obs["array_col"]`` 
+    and ``.obsm["spatial"]``, as the array coordinates tend to have their 
+    origin in places that isn't the top left of the image. Array coordinates 
+    are deemed to be flipped or not based on the Pearson correlation with the 
+    corresponding spatial dimension. Creates ``.uns["bin2cell"]["array_flipped"]`` 
+    that is used by ``b2c.grid_image()`` and ``b2c.insert_labels()``.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin VisiumHD object.
+    '''
+    #store the calls here
+    if not "bin2cell" in adata.uns:
+        adata.uns["bin2cell"] = {}
+    adata.uns["bin2cell"]["array_flipped"] = {}
+    #we'll need to check both the rows and columns
+    for axis in ["row", "col"]:
+        #are we going to be extracting values for a single col or row?
+        #set up where we'll be looking to get values to correlate
+        if axis == "col":
+            single_axis = "row"
+            #spatial[:,0] matches axis_col (note at start)
+            spatial_axis = 0
+        elif axis == "row":
+            single_axis = "col"
+            #spatial[:,1] matches axis_row (note at start)
+            spatial_axis = 1
+        #get the value of the other axis with the highest number of bins present
+        val = adata.obs['array_'+single_axis].value_counts().index[0]
+        #get a boolean mask of the bins of that value
+        mask = (adata.obs['array_'+single_axis] == val)
+        #use the mask to get the spatial and array coordinates to compare
+        array_vals = adata.obs.loc[mask,'array_'+axis].values
+        spatial_vals = adata.obsm['spatial'][mask, spatial_axis]
+        #check whether they're positively or negatively correlated
+        if scipy.stats.pearsonr(array_vals, spatial_vals)[0] < 0:
+            adata.uns["bin2cell"]["array_flipped"][axis] = True
+        else:
+            adata.uns["bin2cell"]["array_flipped"][axis] = False
+
+def grid_image(adata, val, log1p=False, mpp=2, sigma=None):
+    '''
+    Create an image of a specified ``val`` across the array coordinate grid. 
+    Orientation matches the H&E image and spatial coordinates.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin VisiumHD object. Should have array coordinates evaluated by 
+        calling ``b2c.check_array_coordinates()``.
+    val : ``str``
+        ``.obs`` column or variable name to visualise.
+    log1p : ``bool``, optional (default: ``False``)
+        Whether to log1p-transform the values in the image.
+    mpp : ``float``, optional (default: 2)
+        Microns per pixel of the output image.
+    sigma : ``float`` or ``None``, optional (default: ``None``)
+        If not ``None``, will run the final image through 
+        ``skimage.filters.gaussian()`` with the provided sigma value.
+    '''
+    #pull out the values for the image. start by checking .obs
+    if val in adata.obs.columns:
+        vals = adata.obs[val].values.copy()
+    elif val in adata.var_names:
+        #if not in obs, it's presumably in the feature space
+        vals = adata[:, val].X
+        #may be sparse
+        if scipy.sparse.issparse(vals):
+            vals = vals.todense()
+        #turn it to a flattened numpy array so it plays nice
+        vals = np.asarray(vals).flatten()
+    else:
+        #failed to find
+        raise ValueError('"'+val+'" not located in ``.obs`` or ``.var_names``')
+    #make the values span from 0 to 255
+    vals = (255 * (vals-np.min(vals))/(np.max(vals)-np.min(vals))).astype(np.uint8)
+    #optionally log1p
+    if log1p:
+        vals = np.log1p(vals)
+        vals = (255 * (vals-np.min(vals))/(np.max(vals)-np.min(vals))).astype(np.uint8)
+    #can now create an empty image the shape of the grid and stick the values in based on the coordinates
+    #need to nudge up the dimensions by 1 as python is zero-indexed
+    img = np.zeros((np.max(adata.obs["array_row"])+1, np.max(adata.obs["array_col"])+1), dtype=np.uint8)
+    img[adata.obs['array_row'], adata.obs['array_col']] = vals
+    #spatial coordinates match what's going on in the image, array coordinates may not
+    #have we checked if the array row/col need flipping?
+    if not "bin2cell" in adata.uns:
+        check_array_coordinates(adata)
+    elif not "array_flipped" in adata.uns["bin2cell"]:
+        check_array_coordinates(adata)
+    #check if the row or column need flipping
+    if adata.uns["bin2cell"]["array_flipped"]["row"]:
+        img = np.flip(img, axis=0)
+    if adata.uns["bin2cell"]["array_flipped"]["col"]:
+        img = np.flip(img, axis=1)
+    #resize image to appropriate mpp. bins are 2um apart, so current mpp is 2
+    #need to reverse dimensions relative to the array for cv2, and turn to int
+    if mpp != 2:
+        dim = np.round(np.array(img.shape) * 2/mpp).astype(int)[::-1]
+        img = cv2.resize(img, dim, interpolation=cv2.INTER_CUBIC)
+    #run through the gaussian filter if need be
+    if sigma is not None:
+        img = skimage.filters.gaussian(img, sigma=sigma)
+        img = (255 * (img-np.min(img))/(np.max(img)-np.min(img))).astype(np.uint8)
+    return img
+
+def mpp_to_scalef(adata, mpp):
+    '''
+    Compute a scale factor for a specified mpp value.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin Visium object.
+    mpp : ``float``
+        Microns per pixel to report scale factor for.
+    '''
+    #identify name of spatial key for subsequent access of fields
+    library = list(adata.uns['spatial'].keys())[0]
+    #get original image mpp value
+    mpp_source = adata.uns['spatial'][library]['scalefactors']['microns_per_pixel']
+    #our scale factor is the original mpp divided by the new mpp
+    return mpp_source/mpp
+
+def scaled_he_image(adata, mpp=1, save_image=False):
+    '''
+    Create a custom microns per pixel render of the full scale H&E image for 
+    visualisation and downstream application. Store resulting image and its 
+    corresponding size factor in the object, or output the image.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin VisiumHD object. Path to high resolution H&E image provided via 
+        ``source_image_path`` to ``b2c.read_visium_hd()``.
+    mpp : ``float``, optional (default: 1)
+        Microns per pixel of the desired H&E image to create.
+    save_image : ``bool``, optional (default: ``False``)
+        If ``True``, will store generated image in ``.uns['spatial']`` of 
+        ``adata``. If ``False``, will return the image as output instead.
+    '''
+    #identify name of spatial key for subsequent access of fields
+    library = list(adata.uns['spatial'].keys())[0]
+    #retrieve specified source image path and load it
+    img = load_image(adata.uns['spatial'][library]['metadata']['source_image_path'])
+    #reshape image to desired microns per pixel
+    #get necessary scale factor for the custom mpp
+    #multiply dimensions by this to get the shrunken image size
+    #multiply .obsm['spatial'] by this to get coordinates matching the image
+    scalef = mpp_to_scalef(adata, mpp=mpp)
+    #need to reverse dimension order and turn to int for cv2
+    dim = (np.array(img.shape[:2])*scalef).astype(int)[::-1]
+    img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+    if save_image:
+        #we have everything we need. store in object
+        adata.uns['spatial'][library]['images'][str(mpp)+"_mpp"] = img
+        #the scale factor needs to be prefaced with "tissue_"
+        adata.uns['spatial'][library]['scalefactors']['tissue_'+str(mpp)+"_mpp_scalef"] = scalef
+    else:
+        #we're just returning the image
+        return img
+
+def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial", mpp=None, labels_key="labels"):
+    '''
+    Load StarDist segmentation results and store them in the object.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin VisiumHD object.
+    labels_npz_path : ``filepath``
+        Path to sparse labels generated by ``b2c.stardist()``.
+    basis : ``str``, optional (default: ``"spatial"``)
+        Whether the image represents ``"spatial"`` or ``"array"`` coordinates. 
+        The former is the source H&E image, the latter is a GEX-based grid 
+        representation.
+    spatial_key : ``str``, optional (default: ``"spatial"``)
+        Only used with ``basis="spatial"``. Needs to be present in ``.obsm``. 
+        Rounded coordinates will be used to represent each bin when retrieving 
+        labels.
+    mpp : ``float`` or ``None``, optional (default: ``None``)
+        The mpp value that was used to generate the segmented image. Mandatory 
+        for GEX (``basis="array"``), if not provided with H&E 
+        (``basis="spatial"``) will assume full scale image.
+    labels_key : ``str``, optional (default: ``"labels"``)
+        ``.obs`` key to store the labels under.
+    '''
+    #if we're using array coordinates, is there an mpp provided?
+    if basis == "array" and mpp is None:
+        raise ValueError("Need to specify mpp if working with array coordinates.")
+    #load sparse segmentation results
+    labels_sparse = scipy.sparse.load_npz(labels_npz_path)
+    #may as well stash that path in .uns['bin2cell'] since we have it
+    if "bin2cell" not in adata.uns:
+        adata.uns["bin2cell"] = {}
+    if "labels_npz_paths" not in adata.uns["bin2cell"]:
+        adata.uns["bin2cell"]["labels_npz_paths"] = {}
+    #store as absolute path if it's relative
+    if labels_npz_path[0] != "/":
+        npz_prefix = os.getcwd()+"/"
+    else:
+        npz_prefix = ""
+    adata.uns["bin2cell"]["labels_npz_paths"][labels_key] = npz_prefix + labels_npz_path
+    if basis == "spatial":
+        if mpp is not None:
+            #get necessary scale factor
+            scalef = mpp_to_scalef(adata, mpp=mpp)
+        else:
+            #no mpp implies full blown H&E image, so scalef is 1
+            scalef = 1
+        #get the matching coordinates, rounding to integers makes this agree
+        #need to reverse them here to make the coordinates match the image, as per note at start
+        #multiply by the scale factor to account for possible custom mpp H&E image
+        coords = (adata.obsm[spatial_key]*scalef).astype(int)[:,::-1]
+    elif basis == "array":
+        #generate the pixels in the GEX image at the specified mpp
+        #which actually correspond to the locations of the bins
+        coords = np.round(adata.obs[['array_row','array_col']].values * 2/mpp).astype(int)
+        #need to flip axes maybe
+        if adata.uns["bin2cell"]["array_flipped"]["row"]:
+            coords[:,0] = np.max(coords[:,0]) - coords[:,0]
+        if adata.uns["bin2cell"]["array_flipped"]["col"]:
+            coords[:,1] = np.max(coords[:,1]) - coords[:,1]
+    #pull out the cell labels for the coordinates, can just index the sparse matrix with them
+    #insert into bin object, need to turn it into a 1d numpy array from a 1d numpy matrix first
+    adata.obs[labels_key] = np.asarray(labels_sparse[coords[:,0], coords[:,1]]).flatten()
+
+def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expanded", max_bin_distance=4):
+    '''
+    Expand StarDist segmentation results to bins at most 
+    ``max_bin_distance`` distance away in the array coordinates. In the event 
+    of two equidistant bins with different labels, ties are broken by choosing 
+    the closer bin in a PCA representation of gene expression.
+    
+    Input
+    adata : ``AnnData``
+        2um bin VisiumHD object. Raw or destriped counts.
+    labels_key : ``str``, optional (default: ``"labels"``)
+        ``.obs`` key holding the labels to be expanded.
+    expanded_labels_key : ``str``, optional (default: ``"labels_expanded"``)
+        ``.obs`` key to store the expanded labels under.
+    max_bin_distance : ``int``, optional (default: 4)
+        Maximum number of bins to expand the nuclear labels by.
+    '''
+    #this is where the labels will go
+    adata.obs[expanded_labels_key] = adata.obs[labels_key].values.copy()
+    #prepare a PCA as a representation of the GEX space for solving ties
+    #can just run straight on an array to get a PCA matrix back. convenient!
+    #keep the object's X raw for subsequent cell creation
+    pca = sc.pp.pca(np.log1p(adata.X))
+    #get out our array grid, and preexisting labels
+    coords = adata.obs[["array_row","array_col"]].values
+    labels = adata.obs[labels_key].values
+    #we'll be splitting the space in two - the bins with labels, and those without
+    object_mask = (labels != 0)
+    #get their indices in cell space
+    full_reference_inds = np.arange(adata.shape[0])[object_mask]
+    full_query_inds = np.arange(adata.shape[0])[~object_mask]
+    #for each unassigned bin, we'll find its two nearest neighbours in the assigned space
+    #build a reference using the assigned bins' coordinates
+    ckd = scipy.spatial.cKDTree(coords[object_mask, :])
+    #query it using the unassigned bins' coordinates
+    dists, hits = ckd.query(x=coords[~object_mask,:], k=2, workers=-1)
+    #convert the identified indices back to the full cell space
+    hits = full_reference_inds[hits]
+    #get the label calls for each of the hits
+    calls = labels[hits]
+    #first case - one bin is closer than the others
+    clear_mask = ((dists[:,0]<dists[:,1]) & (dists[:,0]<=max_bin_distance))
+    #get their indices in the original cell space
+    clear_query_inds = full_query_inds[clear_mask]
+    clear_query_labels = calls[clear_mask,0]
+    #insert calls into object
+    adata.obs.loc[adata.obs_names[clear_query_inds], expanded_labels_key] = clear_query_labels   
+    #second case - two bins are equidistant and share a label
+    #start by defining a general tied mask of "two bins are equidistant and close enough"
+    tied_mask = ((dists[:,0]==dists[:,1]) & (dists[:,0]<=max_bin_distance))
+    same_mask = tied_mask & (calls[:,0] == calls[:,1])
+    #get their indices in the original cell space
+    same_query_inds = full_query_inds[same_mask]
+    same_query_labels = calls[same_mask,0]
+    #insert calls into object
+    adata.obs.loc[adata.obs_names[same_query_inds], expanded_labels_key] = same_query_labels
+    #third case - two bins are equidistant and the label does not agree
+    ambiguous_mask = tied_mask & (calls[:,0] != calls[:,1])
+    #get their indices in the original cell space
+    ambiguous_query_inds = full_query_inds[ambiguous_mask]
+    #compute the distances between the expression profiles of the undecided bin and the neighbours
+    #np.linalg.norm is the fastest way to get euclidean, subtract two point sets beforehand
+    hit0eucl = np.linalg.norm(pca[hits[ambiguous_mask,0],:]-pca[ambiguous_query_inds,:])
+    hit1eucl = np.linalg.norm(pca[hits[ambiguous_mask,1],:]-pca[ambiguous_query_inds,:])
+    #can now define calls. start off as undecided
+    ambiguous_query_labels = np.zeros(ambiguous_query_inds.shape)
+    #the lower euclidean is the victor
+    ambiguous_query_labels[hit0eucl<hit1eucl] = calls[ambiguous_mask,0][hit0eucl<hit1eucl]
+    ambiguous_query_labels[hit0eucl>hit1eucl] = calls[ambiguous_mask,1][hit0eucl>hit1eucl]
+    #insert calls into object
+    adata.obs.loc[adata.obs_names[ambiguous_query_inds], expanded_labels_key] = ambiguous_query_labels
+
+def bin_to_cell(adata, labels_key="labels_expanded", spatial_keys=["spatial"], diameter_scale_factor=None):
+    '''
+    Collapse all bins for a given nonzero ``labels_key`` into a single cell. 
+    Gene expression added up, array coordinates and ``spatial_keys`` averaged out. 
+    ``"spot_diameter_fullres"`` in the scale factors multiplied by 
+    ``diameter_scale_factor`` to reflect increased unit size. Returns cell level AnnData, 
+    including ``.obs["bin_count"]`` reporting how many bins went into creating the cell.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin VisiumHD object. Raw or destriped counts. Needs ``labels_key`` in ``.obs`` 
+        and ``spatial_keys`` in ``.obsm``.
+    labels_key : ``str``, optional (default: ``"labels_expanded"``)
+        Which ``.obs`` key to use for grouping 2um bins into cells.
+    spatial_keys : list of ``str``, optional (default: ``["spatial"]``)
+        Which ``.obsm`` keys to average out across all bins falling into a cell to get a 
+        cell's respective spatial coordinates.
+    diameter_scale_factor : ``float`` or ``None``, optional (default: ``None``)
+        The object's ``"spot_diameter_fullres"`` will be multiplied by this much to reflect 
+        the change in unit per observation. If ``None``, will default to the square root of 
+        the mean of the per-cell bin counts.
+    '''
+    #a label of 0 means there's nothing there, ditch those bins from this operation
+    adata = adata[adata.obs[labels_key]!=0]
+    #use the newly inserted labels to make pandas dummies, as sparse because the data is huge
+    cell_to_bin = pd.get_dummies(adata.obs[labels_key], sparse=True)
+    #take a quick detour to save the cell labels as they appear in the dummies
+    #they're likely to be integers, make them strings to avoid complications in the downstream AnnData
+    cell_names = [str(i) for i in cell_to_bin.columns]
+    #then pull out the actual internal sparse matrix (.sparse) as a scipy COO one, turn to CSR
+    #this has bins as rows, transpose so cells are as rows (and CSR becomes CSC for .dot())
+    cell_to_bin = cell_to_bin.sparse.to_coo().tocsr().T
+    #can now generate the cell expression matrix by adding up the bins (via matrix multiplication)
+    #cell-bin * bin-gene = cell-gene
+    #(turn it to CSR at the end as somehow it comes out CSC)
+    X = cell_to_bin.dot(adata.X).tocsr()
+    #create object, stash stuff
+    cell_adata = ad.AnnData(X, var = adata.var)
+    cell_adata.obs_names = cell_names
+    cell_adata.uns['spatial'] = adata.uns['spatial'].copy()
+    #getting the centroids (means of bin coords) involves computing a mean of each cell_to_bin row
+    #premultiplying by a diagonal matrix multiplies each row by a value: https://solitaryroad.com/c108.html
+    #use that to divide each row by it sum (.sum(axis=1)), then matrix multiply the result by bin coords
+    #stash the sum into a separate variable for subsequent object storage
+    #cell-cell * cell-bin * bin-coord = cell-coord
+    bin_count = np.asarray(cell_to_bin.sum(axis=1)).flatten()
+    row_means = scipy.sparse.diags(1/bin_count)
+    cell_adata.obs['bin_count'] = bin_count
+    #take the thing out for a spin with array coordinates
+    cell_adata.obs["array_row"] = row_means.dot(cell_to_bin).dot(adata.obs["array_row"].values)
+    cell_adata.obs["array_col"] = row_means.dot(cell_to_bin).dot(adata.obs["array_col"].values)
+    #generate the various spatial coordinate systems
+    #just in case a single is passed as a string
+    if type(spatial_keys) is not list:
+        spatial_keys = [spatial_keys]
+    for spatial_key in spatial_keys:
+        cell_adata.obsm[spatial_key] = row_means.dot(cell_to_bin).dot(adata.obsm[spatial_key])
+    #of note, the default scale factor bin diameter at 2um resolution stops rendering sensibly in plots
+    #by default estimate it as the sqrt of the bin count mean
+    if diameter_scale_factor is None:
+        diameter_scale_factor = np.sqrt(np.mean(bin_count))
+    #bump it up to something a bit more sensible
+    library = list(adata.uns['spatial'].keys())[0]
+    cell_adata.uns['spatial'][library]['scalefactors']['spot_diameter_fullres'] *= diameter_scale_factor
+    return cell_adata

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "bin2cell"
+authors = [{name = "Krzysztof Polanski, Nadav Yayon", email = "kp9@sanger.ac.uk"}]
+license = {file = "LICENSE"}
+classifiers = ["License :: OSI Approved :: MIT License"]
+dynamic = ["version", "description"]
+dependencies = [
+    "scanpy",
+    "stardist",
+    "opencv-python",
+    "fastparquet"
+]
+requires-python = ">=3.7"
+
+[project.urls]
+Home = "https://github.com/Teichlab/bin2cell"
