@@ -381,26 +381,37 @@ def destripe(adata, quantile=0.95, adjust_counts=True):
     if adjust_counts:
         destripe_counts(adata)
 
-def check_array_coordinates(adata):
+def check_array_coordinates(adata, row_max=3349, col_max=3349):
     '''
     Assess the relationship between ``.obs["array_row"]``/``.obs["array_col"]`` 
     and ``.obsm["spatial"]``, as the array coordinates tend to have their 
     origin in places that isn't the top left of the image. Array coordinates 
     are deemed to be flipped or not based on the Pearson correlation with the 
-    corresponding spatial dimension. Creates ``.uns["bin2cell"]["array_flipped"]`` 
-    that is used by ``b2c.grid_image()`` and ``b2c.insert_labels()``.
+    corresponding spatial dimension. Creates ``.uns["bin2cell"]["array_check"]`` 
+    that is used by ``b2c.grid_image()``, ``b2c.insert_labels()`` and 
+    ``b2c.get_crop()``.
     
     Input
     -----
     adata : ``AnnData``
         2um bin VisiumHD object.
+    row_max : ``int``, optional (default: 3349)
+        Maximum possible ``array_row`` value.
+    col_max : ``int``, optional (default: 3349)
+        Maximum possible ``array_col`` value.
     '''
     #store the calls here
     if not "bin2cell" in adata.uns:
         adata.uns["bin2cell"] = {}
-    adata.uns["bin2cell"]["array_flipped"] = {}
+    adata.uns["bin2cell"]["array_check"] = {}
     #we'll need to check both the rows and columns
     for axis in ["row", "col"]:
+        #we may as well store the maximum immediately
+        adata.uns["bin2cell"]["array_check"][axis] = {}
+        if axis == "row":
+            adata.uns["bin2cell"]["array_check"][axis]["max"] = row_max
+        elif axis == "col":
+            adata.uns["bin2cell"]["array_check"][axis]["max"] = col_max
         #are we going to be extracting values for a single col or row?
         #set up where we'll be looking to get values to correlate
         if axis == "col":
@@ -420,9 +431,9 @@ def check_array_coordinates(adata):
         spatial_vals = adata.obsm['spatial'][mask, spatial_axis]
         #check whether they're positively or negatively correlated
         if scipy.stats.pearsonr(array_vals, spatial_vals)[0] < 0:
-            adata.uns["bin2cell"]["array_flipped"][axis] = True
+            adata.uns["bin2cell"]["array_check"][axis]["flipped"] = True
         else:
-            adata.uns["bin2cell"]["array_flipped"][axis] = False
+            adata.uns["bin2cell"]["array_check"][axis]["flipped"] = False
 
 def grid_image(adata, val, log1p=False, mpp=2, sigma=None):
     '''
@@ -464,20 +475,22 @@ def grid_image(adata, val, log1p=False, mpp=2, sigma=None):
     if log1p:
         vals = np.log1p(vals)
         vals = (255 * (vals-np.min(vals))/(np.max(vals)-np.min(vals))).astype(np.uint8)
-    #can now create an empty image the shape of the grid and stick the values in based on the coordinates
-    #need to nudge up the dimensions by 1 as python is zero-indexed
-    img = np.zeros((np.max(adata.obs["array_row"])+1, np.max(adata.obs["array_col"])+1), dtype=np.uint8)
-    img[adata.obs['array_row'], adata.obs['array_col']] = vals
     #spatial coordinates match what's going on in the image, array coordinates may not
     #have we checked if the array row/col need flipping?
     if not "bin2cell" in adata.uns:
         check_array_coordinates(adata)
-    elif not "array_flipped" in adata.uns["bin2cell"]:
+    elif not "array_check" in adata.uns["bin2cell"]:
         check_array_coordinates(adata)
+    #can now create an empty image the shape of the grid and stick the values in based on the coordinates
+    #need to nudge up the dimensions by 1 as python is zero-indexed
+    img = np.zeros((adata.uns["bin2cell"]["array_check"]["row"]["max"]+1, 
+                    adata.uns["bin2cell"]["array_check"]["col"]["max"]+1), 
+                   dtype=np.uint8)
+    img[adata.obs['array_row'], adata.obs['array_col']] = vals
     #check if the row or column need flipping
-    if adata.uns["bin2cell"]["array_flipped"]["row"]:
+    if adata.uns["bin2cell"]["array_check"]["row"]["flipped"]:
         img = np.flip(img, axis=0)
-    if adata.uns["bin2cell"]["array_flipped"]["col"]:
+    if adata.uns["bin2cell"]["array_check"]["col"]["flipped"]:
         img = np.flip(img, axis=1)
     #resize image to appropriate mpp. bins are 2um apart, so current mpp is 2
     #need to reverse dimensions relative to the array for cv2, and turn to int
@@ -546,6 +559,53 @@ def scaled_he_image(adata, mpp=1, save_image=False):
         #we're just returning the image
         return img
 
+def get_mpp_coords(adata, basis="spatial", spatial_key="spatial", mpp=None):
+    '''
+    Get an mpp-adjusted representation of spatial or array coordinates of the 
+    provided object. Origin in top left, dimensions correspond to ``np.array()`` 
+    representation of image (``[:,0]`` is up-down, ``[:,1]`` is left-right).
+    
+    adata : ``AnnData``
+        2um bin VisiumHD object.
+    basis : ``str``, optional (default: ``"spatial"``)
+        Whether to get ``"spatial"`` or ``"array"`` coordinates. The former is 
+        the source H&E image, the latter is a GEX-based grid representation.
+    spatial_key : ``str``, optional (default: ``"spatial"``)
+        Only used with ``basis="spatial"``. Needs to be present in ``.obsm``. 
+        Rounded coordinates will be used to represent each bin when retrieving 
+        labels.
+    mpp : ``float`` or ``None``, optional (default: ``None``)
+        The mpp value. Mandatory for GEX (``basis="array"``), if not provided 
+        with H&E (``basis="spatial"``) will assume full scale image.
+    '''
+    #if we're using array coordinates, is there an mpp provided?
+    if basis == "array" and mpp is None:
+        raise ValueError("Need to specify mpp if working with array coordinates.")
+    if basis == "spatial":
+        if mpp is not None:
+            #get necessary scale factor
+            scalef = mpp_to_scalef(adata, mpp=mpp)
+        else:
+            #no mpp implies full blown H&E image, so scalef is 1
+            scalef = 1
+        #get the matching coordinates, rounding to integers makes this agree
+        #need to reverse them here to make the coordinates match the image, as per note at start
+        #multiply by the scale factor to account for possible custom mpp H&E image
+        coords = (adata.obsm[spatial_key]*scalef).astype(int)[:,::-1]
+    elif basis == "array":
+        #generate the pixels in the GEX image at the specified mpp
+        #which actually correspond to the locations of the bins
+        #easy to define scale factor as starting array mpp is 2
+        scalef = 2/mpp
+        coords = np.round(adata.obs[['array_row','array_col']].values*scalef).astype(int)
+        #need to flip axes maybe
+        #need to scale up maximum appropriately
+        if adata.uns["bin2cell"]["array_check"]["row"]["flipped"]:
+            coords[:,0] = int(adata.uns["bin2cell"]["array_check"]["row"]["max"]*scalef) - coords[:,0]
+        if adata.uns["bin2cell"]["array_check"]["col"]["flipped"]:
+            coords[:,1] = int(adata.uns["bin2cell"]["array_check"]["col"]["max"]*scalef) - coords[:,1]
+    return coords
+
 def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial", mpp=None, labels_key="labels"):
     '''
     Load StarDist segmentation results and store them in the object.
@@ -571,9 +631,6 @@ def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial"
     labels_key : ``str``, optional (default: ``"labels"``)
         ``.obs`` key to store the labels under.
     '''
-    #if we're using array coordinates, is there an mpp provided?
-    if basis == "array" and mpp is None:
-        raise ValueError("Need to specify mpp if working with array coordinates.")
     #load sparse segmentation results
     labels_sparse = scipy.sparse.load_npz(labels_npz_path)
     #may as well stash that path in .uns['bin2cell'] since we have it
@@ -587,26 +644,8 @@ def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial"
     else:
         npz_prefix = ""
     adata.uns["bin2cell"]["labels_npz_paths"][labels_key] = npz_prefix + labels_npz_path
-    if basis == "spatial":
-        if mpp is not None:
-            #get necessary scale factor
-            scalef = mpp_to_scalef(adata, mpp=mpp)
-        else:
-            #no mpp implies full blown H&E image, so scalef is 1
-            scalef = 1
-        #get the matching coordinates, rounding to integers makes this agree
-        #need to reverse them here to make the coordinates match the image, as per note at start
-        #multiply by the scale factor to account for possible custom mpp H&E image
-        coords = (adata.obsm[spatial_key]*scalef).astype(int)[:,::-1]
-    elif basis == "array":
-        #generate the pixels in the GEX image at the specified mpp
-        #which actually correspond to the locations of the bins
-        coords = np.round(adata.obs[['array_row','array_col']].values * 2/mpp).astype(int)
-        #need to flip axes maybe
-        if adata.uns["bin2cell"]["array_flipped"]["row"]:
-            coords[:,0] = np.max(coords[:,0]) - coords[:,0]
-        if adata.uns["bin2cell"]["array_flipped"]["col"]:
-            coords[:,1] = np.max(coords[:,1]) - coords[:,1]
+    #get the appropriate coordinates, be they spatial or array, at appropriate mpp
+    coords = get_mpp_coords(adata, basis=basis, spatial_key=spatial_key, mpp=mpp)
     #pull out the cell labels for the coordinates, can just index the sparse matrix with them
     #insert into bin object, need to turn it into a 1d numpy array from a 1d numpy matrix first
     adata.obs[labels_key] = np.asarray(labels_sparse[coords[:,0], coords[:,1]]).flatten()
@@ -682,6 +721,33 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
     ambiguous_query_labels[hit0eucl>hit1eucl] = calls[ambiguous_mask,1][hit0eucl>hit1eucl]
     #insert calls into object
     adata.obs.loc[adata.obs_names[ambiguous_query_inds], expanded_labels_key] = ambiguous_query_labels
+
+def get_crop(adata, basis="spatial", spatial_key="spatial", mpp=None):
+    '''
+    Get a PIL-formatted crop tuple from a provided object and coordinate 
+    representation. Primarily for use with ``b2c.view_stardist_labels()``.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin VisiumHD object.
+    basis : ``str``, optional (default: ``"spatial"``)
+        Whether to use ``"spatial"`` or ``"array"`` coordinates. The former is 
+        the source H&E image, the latter is a GEX-based grid representation.
+    spatial_key : ``str``, optional (default: ``"spatial"``)
+        Only used with ``basis="spatial"``. Needs to be present in ``.obsm``. 
+        Rounded coordinates will be used to represent each bin when retrieving 
+        labels.
+    mpp : ``float`` or ``None``, optional (default: ``None``)
+        The micron per pixel value to use. Mandatory for GEX (``basis="array"``), 
+        if not provided with H&E (``basis="spatial"``) will assume full scale 
+        image.
+    '''
+    #get the appropriate coordinates, be they spatial or array, at appropriate mpp
+    coords = get_mpp_coords(adata, basis=basis, spatial_key=spatial_key, mpp=mpp)
+    #PIL crop is defined as a tuple of (left, upper, right, lower) coordinates
+    #coords[:,0] is up-down, coords[:,1] is left-right
+    return (np.min(coords[:,1]), np.min(coords[:,0]), np.max(coords[:,1]), np.max(coords[:,0]))
 
 def bin_to_cell(adata, labels_key="labels_expanded", spatial_keys=["spatial"], diameter_scale_factor=None):
     '''
