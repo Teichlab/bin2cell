@@ -162,6 +162,10 @@ def view_stardist_labels(image_path, labels_npz_path, crop):
     labels_sparse = scipy.sparse.load_npz(labels_npz_path)
     #upper:lower, left:right
     labels_sparse = labels_sparse[crop[1]:crop[3], crop[0]:crop[2]]
+    #reset labels within crop to start from 1 and go up by 1
+    #which makes the stardist view more colourful in objects
+    #calling this on [5,7,7,9] yields [1,2,2,3] which is what we want
+    labels_sparse.data = scipy.stats.rankdata(labels_sparse.data, method="dense")
     labels = np.array(labels_sparse.todense())
     return render_label(labels, img=img)
 
