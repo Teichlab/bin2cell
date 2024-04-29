@@ -716,8 +716,8 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
     ambiguous_query_inds = full_query_inds[ambiguous_mask]
     #compute the distances between the expression profiles of the undecided bin and the neighbours
     #np.linalg.norm is the fastest way to get euclidean, subtract two point sets beforehand
-    hit0eucl = np.linalg.norm(pca[hits[ambiguous_mask,0],:]-pca[ambiguous_query_inds,:])
-    hit1eucl = np.linalg.norm(pca[hits[ambiguous_mask,1],:]-pca[ambiguous_query_inds,:])
+    hit0eucl = np.linalg.norm(pca[hits[ambiguous_mask,0],:]-pca[ambiguous_query_inds,:], axis=1)
+    hit1eucl = np.linalg.norm(pca[hits[ambiguous_mask,1],:]-pca[ambiguous_query_inds,:], axis=1)
     #can now define calls. start off as undecided
     ambiguous_query_labels = np.zeros(ambiguous_query_inds.shape)
     #the lower euclidean is the victor
