@@ -525,44 +525,6 @@ def mpp_to_scalef(adata, mpp):
     #our scale factor is the original mpp divided by the new mpp
     return mpp_source/mpp
 
-def scaled_he_image(adata, mpp=1, save_image=False):
-    '''
-    Create a custom microns per pixel render of the full scale H&E image for 
-    visualisation and downstream application. Store resulting image and its 
-    corresponding size factor in the object, or output the image.
-    
-    Input
-    -----
-    adata : ``AnnData``
-        2um bin VisiumHD object. Path to high resolution H&E image provided via 
-        ``source_image_path`` to ``b2c.read_visium_hd()``.
-    mpp : ``float``, optional (default: 1)
-        Microns per pixel of the desired H&E image to create.
-    save_image : ``bool``, optional (default: ``False``)
-        If ``True``, will store generated image in ``.uns['spatial']`` of 
-        ``adata``. If ``False``, will return the image as output instead.
-    '''
-    #identify name of spatial key for subsequent access of fields
-    library = list(adata.uns['spatial'].keys())[0]
-    #retrieve specified source image path and load it
-    img = load_image(adata.uns['spatial'][library]['metadata']['source_image_path'])
-    #reshape image to desired microns per pixel
-    #get necessary scale factor for the custom mpp
-    #multiply dimensions by this to get the shrunken image size
-    #multiply .obsm['spatial'] by this to get coordinates matching the image
-    scalef = mpp_to_scalef(adata, mpp=mpp)
-    #need to reverse dimension order and turn to int for cv2
-    dim = (np.array(img.shape[:2])*scalef).astype(int)[::-1]
-    img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
-    if save_image:
-        #we have everything we need. store in object
-        adata.uns['spatial'][library]['images'][str(mpp)+"_mpp"] = img
-        #the scale factor needs to be prefaced with "tissue_"
-        adata.uns['spatial'][library]['scalefactors']['tissue_'+str(mpp)+"_mpp_scalef"] = scalef
-    else:
-        #we're just returning the image
-        return img
-
 def get_mpp_coords(adata, basis="spatial", spatial_key="spatial", mpp=None):
     '''
     Get an mpp-adjusted representation of spatial or array coordinates of the 
@@ -609,6 +571,93 @@ def get_mpp_coords(adata, basis="spatial", spatial_key="spatial", mpp=None):
         if adata.uns["bin2cell"]["array_check"]["col"]["flipped"]:
             coords[:,1] = int(adata.uns["bin2cell"]["array_check"]["col"]["max"]*scalef) - coords[:,1]
     return coords
+
+def get_crop(adata, basis="spatial", spatial_key="spatial", mpp=None, buffer=0):
+    '''
+    Get a PIL-formatted crop tuple from a provided object and coordinate 
+    representation.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin VisiumHD object.
+    basis : ``str``, optional (default: ``"spatial"``)
+        Whether to use ``"spatial"`` or ``"array"`` coordinates. The former is 
+        the source H&E image, the latter is a GEX-based grid representation.
+    spatial_key : ``str``, optional (default: ``"spatial"``)
+        Only used with ``basis="spatial"``. Needs to be present in ``.obsm``. 
+        Rounded coordinates will be used to represent each bin when retrieving 
+        labels.
+    mpp : ``float`` or ``None``, optional (default: ``None``)
+        The micron per pixel value to use. Mandatory for GEX (``basis="array"``), 
+        if not provided with H&E (``basis="spatial"``) will assume full scale 
+        image.
+    buffer : ``int``, optional (default: 0)
+        How many extra pixels to include to each side the cropped grid for 
+        extra visualisation.
+    '''
+    #get the appropriate coordinates, be they spatial or array, at appropriate mpp
+    coords = get_mpp_coords(adata, basis=basis, spatial_key=spatial_key, mpp=mpp)
+    #PIL crop is defined as a tuple of (left, upper, right, lower) coordinates
+    #coords[:,0] is up-down, coords[:,1] is left-right
+    #don't forget to add/remove buffer, and to not go past 0
+    return (np.max([np.min(coords[:,1])-buffer, 0]), 
+            np.max([np.min(coords[:,0])-buffer, 0]), 
+            np.max(coords[:,1])+buffer, 
+            np.max(coords[:,0])+buffer
+           )
+
+def scaled_he_image(adata, mpp=1, crop=True, buffer=500, spatial_cropped_key="spatial_cropped"):
+    '''
+    Create a custom microns per pixel render of the full scale H&E image for 
+    visualisation and downstream application. Store resulting image and its 
+    corresponding size factor in the object. If cropping to just the spatial 
+    grid, also store the cropped spatial coordinates.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin VisiumHD object. Path to high resolution H&E image provided via 
+        ``source_image_path`` to ``b2c.read_visium_hd()``.
+    mpp : ``float``, optional (default: 1)
+        Microns per pixel of the desired H&E image to create.
+    crop : ``bool``, optional (default: ``True``)
+        If ``True``, will limit the image to the actual spatial coordinate area, 
+        with ``buffer`` added to each dimension.
+    buffer : ``int``, optional (default: 500)
+        Only used with ``crop=True``. How many extra pixels (in original 
+        resolution) to include on each side of the captured spatial grid.
+    spatial_cropped_key : ``str``, optional (default: ``"spatial_cropped"``)
+        Only used with ``crop=True``. ``.obsm`` key to store the adjusted 
+        spatial coordinates in.
+    '''
+    #identify name of spatial key for subsequent access of fields
+    library = list(adata.uns['spatial'].keys())[0]
+    #retrieve specified source image path and load it
+    img = load_image(adata.uns['spatial'][library]['metadata']['source_image_path'])
+    #crop image if necessary
+    if crop:
+        crop_coords = get_crop(adata, basis="spatial", spatial_key="spatial", mpp=None, buffer=buffer)
+        #this is already capped at a minimum of 0, so can just subset freely
+        #left, upper, right, lower; image is up-down, left-right
+        img = img[crop_coords[1]:crop_coords[3], crop_coords[0]:crop_coords[2], :]
+        #need to move spatial so it starts at the new crop top left point
+        #spatial[:,1] is up-down, spatial[:,0] is left-right
+        adata.obsm[spatial_cropped_key] = adata.obsm["spatial"].copy()
+        adata.obsm[spatial_cropped_key][:,0] -= crop_coords[0]
+        adata.obsm[spatial_cropped_key][:,1] -= crop_coords[1]
+    #reshape image to desired microns per pixel
+    #get necessary scale factor for the custom mpp
+    #multiply dimensions by this to get the shrunken image size
+    #multiply .obsm['spatial'] by this to get coordinates matching the image
+    scalef = mpp_to_scalef(adata, mpp=mpp)
+    #need to reverse dimension order and turn to int for cv2
+    dim = (np.array(img.shape[:2])*scalef).astype(int)[::-1]
+    img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+    #we have everything we need. store in object
+    adata.uns['spatial'][library]['images'][str(mpp)+"_mpp"] = img
+    #the scale factor needs to be prefaced with "tissue_"
+    adata.uns['spatial'][library]['scalefactors']['tissue_'+str(mpp)+"_mpp_scalef"] = scalef
 
 def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial", mpp=None, labels_key="labels"):
     '''
@@ -725,33 +774,6 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
     ambiguous_query_labels[hit0eucl>hit1eucl] = calls[ambiguous_mask,1][hit0eucl>hit1eucl]
     #insert calls into object
     adata.obs.loc[adata.obs_names[ambiguous_query_inds], expanded_labels_key] = ambiguous_query_labels
-
-def get_crop(adata, basis="spatial", spatial_key="spatial", mpp=None):
-    '''
-    Get a PIL-formatted crop tuple from a provided object and coordinate 
-    representation. Primarily for use with ``b2c.view_stardist_labels()``.
-    
-    Input
-    -----
-    adata : ``AnnData``
-        2um bin VisiumHD object.
-    basis : ``str``, optional (default: ``"spatial"``)
-        Whether to use ``"spatial"`` or ``"array"`` coordinates. The former is 
-        the source H&E image, the latter is a GEX-based grid representation.
-    spatial_key : ``str``, optional (default: ``"spatial"``)
-        Only used with ``basis="spatial"``. Needs to be present in ``.obsm``. 
-        Rounded coordinates will be used to represent each bin when retrieving 
-        labels.
-    mpp : ``float`` or ``None``, optional (default: ``None``)
-        The micron per pixel value to use. Mandatory for GEX (``basis="array"``), 
-        if not provided with H&E (``basis="spatial"``) will assume full scale 
-        image.
-    '''
-    #get the appropriate coordinates, be they spatial or array, at appropriate mpp
-    coords = get_mpp_coords(adata, basis=basis, spatial_key=spatial_key, mpp=mpp)
-    #PIL crop is defined as a tuple of (left, upper, right, lower) coordinates
-    #coords[:,0] is up-down, coords[:,1] is left-right
-    return (np.min(coords[:,1]), np.min(coords[:,0]), np.max(coords[:,1]), np.max(coords[:,0]))
 
 def bin_to_cell(adata, labels_key="labels_expanded", spatial_keys=["spatial"], diameter_scale_factor=None):
     '''
