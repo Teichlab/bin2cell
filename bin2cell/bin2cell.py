@@ -858,7 +858,9 @@ def bin_to_cell(adata, labels_key="labels_expanded", spatial_keys=["spatial"], d
         and ``spatial_keys`` in ``.obsm``.
     labels_key : ``str``, optional (default: ``"labels_expanded"``)
         Which ``.obs`` key to use for grouping 2um bins into cells. Integers, with 0 being 
-        unassigned to an object.
+        unassigned to an object. If an extra ``"_source"`` column is detected as a result 
+        of ``b2c.salvage_secondary_labels()`` calling, its info will be propagated per 
+        label.
     spatial_keys : list of ``str``, optional (default: ``["spatial"]``)
         Which ``.obsm`` keys to average out across all bins falling into a cell to get a 
         cell's respective spatial coordinates.
@@ -910,4 +912,14 @@ def bin_to_cell(adata, labels_key="labels_expanded", spatial_keys=["spatial"], d
     #bump it up to something a bit more sensible
     library = list(adata.uns['spatial'].keys())[0]
     cell_adata.uns['spatial'][library]['scalefactors']['spot_diameter_fullres'] *= diameter_scale_factor
+    #if we can find a source column, transfer that
+    if labels_key+"_source" in adata.obs.columns:
+        #hell of a one liner. the premise is to turn two columns of obs into a translation dictionary
+        #so pull them out, keep unique rows, turn everything to string (as labels are strings in cells)
+        #then set the index to be the label names, turn the thing to dict
+        #pd.DataFrame -> dict makes one entry per column (even if we just have the one column here)
+        #so pull out our column's entry and we have what we're after
+        mapping = adata.obs[[labels_key,labels_key+"_source"]].drop_duplicates().astype(str).set_index(labels_key).to_dict()[labels_key+"_source"]
+        #translate the labels from the cell object
+        cell_adata.obs[labels_key+"_source"] = [mapping[i] for i in cell_adata.obs_names]
     return cell_adata
