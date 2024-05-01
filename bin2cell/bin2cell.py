@@ -668,7 +668,8 @@ def scaled_he_image(adata, mpp=1, crop=True, buffer=500, spatial_cropped_key="sp
 
 def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial", mpp=None, labels_key="labels"):
     '''
-    Load StarDist segmentation results and store them in the object.
+    Load StarDist segmentation results and store them in the object. Labels 
+    will be stored as integers, with 0 being unassigned to an object.
     
     Input
     -----
@@ -715,13 +716,15 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
     Expand StarDist segmentation results to bins at most 
     ``max_bin_distance`` distance away in the array coordinates. In the event 
     of two equidistant bins with different labels, ties are broken by choosing 
-    the closer bin in a PCA representation of gene expression.
+    the closer bin in a PCA representation of gene expression. The resulting 
+    labels will be integers, with 0 being unassigned to an object.
     
     Input
     adata : ``AnnData``
         2um bin VisiumHD object. Raw or destriped counts.
     labels_key : ``str``, optional (default: ``"labels"``)
-        ``.obs`` key holding the labels to be expanded.
+        ``.obs`` key holding the labels to be expanded. Integers, with 0 being 
+        unassigned to an object.
     expanded_labels_key : ``str``, optional (default: ``"labels_expanded"``)
         ``.obs`` key to store the expanded labels under.
     max_bin_distance : ``int``, optional (default: 4)
@@ -798,6 +801,48 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
         #insert calls into object
         adata.obs.loc[adata.obs_names[ambiguous_query_inds], expanded_labels_key] = ambiguous_query_labels
 
+def salvage_secondary_labels(adata, primary_label="labels_he_expanded", secondary_label="labels_gex", labels_key="labels_joint"):
+    '''
+    Create a joint ``labels_key`` that takes the ``primary_label`` and fills in 
+    unassigned bins based on calls from ``secondary_label``. Only objects that do not 
+    overlap with any bins called as part of ``primary_label`` are transferred over.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin VisiumHD object. Needs ``primary_key`` and ``secodary_key`` in ``.obs``.
+    primary_label : ``str``, optional (default: ``"labels_he_expanded"``)
+        ``.obs`` key holding the main labels. Integers, with 0 being unassigned to an 
+        object.
+    secondary_label : ``str``, optional (default: ``"labels_gex"``)
+        ``.obs`` key holding the labels to be inserted into unassigned spots. Integers, 
+        with 0 being unassigned to an object.
+    labels_key : ``str``, optional (default: ``"labels_joint"``)
+        ``.obs`` key to store the combined label information into. Will also add a 
+        second column with ``"_source"`` appended to differentiate whether the bin was 
+        tagged from the primary or secondary label.
+    '''
+    #these are the bins that have the primary label assigned
+    primary = adata.obs.loc[adata.obs[primary_label] > 0, :]
+    #these are the bins that lack the primary label, but have the secondary label
+    secondary = adata.obs.loc[adata.obs[primary_label] == 0, :]
+    secondary = secondary.loc[secondary[secondary_label] > 0, :]
+    #kick out any secondary labels that appear in primary-labelled bins
+    #we are just interested in ones that are unique to bins without primary labelling
+    secondary_to_take = np.array(list(set(secondary[secondary_label]).difference(set(primary[secondary_label]))))
+    #both of these labels are integers, starting from 1
+    #offset the new secondary labels by however much the maximum primary label is
+    offset = np.max(adata.obs[primary_label])
+    #use the primary labels as a basis
+    adata.obs[labels_key] = adata.obs[primary_label].copy()
+    #flag any bins that are assigned to our secondary labels of interest
+    mask = np.isin(adata.obs[secondary_label], secondary_to_take)
+    adata.obs.loc[mask, labels_key] = adata.obs.loc[mask, secondary_label] + offset
+    #store information on origin of call
+    adata.obs[labels_key+"_source"] = "none"
+    adata.obs.loc[adata.obs[primary_label]>0, labels_key+"_source"] = "primary"
+    adata.obs.loc[mask, labels_key+"_source"] = "secondary"
+
 def bin_to_cell(adata, labels_key="labels_expanded", spatial_keys=["spatial"], diameter_scale_factor=None):
     '''
     Collapse all bins for a given nonzero ``labels_key`` into a single cell. 
@@ -812,7 +857,8 @@ def bin_to_cell(adata, labels_key="labels_expanded", spatial_keys=["spatial"], d
         2um bin VisiumHD object. Raw or destriped counts. Needs ``labels_key`` in ``.obs`` 
         and ``spatial_keys`` in ``.obsm``.
     labels_key : ``str``, optional (default: ``"labels_expanded"``)
-        Which ``.obs`` key to use for grouping 2um bins into cells.
+        Which ``.obs`` key to use for grouping 2um bins into cells. Integers, with 0 being 
+        unassigned to an object.
     spatial_keys : list of ``str``, optional (default: ``["spatial"]``)
         Which ``.obsm`` keys to average out across all bins falling into a cell to get a 
         cell's respective spatial coordinates.
