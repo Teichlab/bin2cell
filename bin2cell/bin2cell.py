@@ -11,6 +11,7 @@ from matplotlib.image import imread
 #actual bin2cell dependencies start here
 #the ones above are for read_visium_hd()
 from stardist.plot import render_label
+from copy import deepcopy
 import scipy.spatial
 import scipy.sparse
 import scipy.stats
@@ -837,7 +838,8 @@ def bin_to_cell(adata, labels_key="labels_expanded", spatial_keys=["spatial"], d
     #create object, stash stuff
     cell_adata = ad.AnnData(X, var = adata.var)
     cell_adata.obs_names = cell_names
-    cell_adata.uns['spatial'] = adata.uns['spatial'].copy()
+    #need to bust out deepcopy here as otherwise altering the spot diameter gets back-propagated
+    cell_adata.uns['spatial'] = deepcopy(adata.uns['spatial'])
     #getting the centroids (means of bin coords) involves computing a mean of each cell_to_bin row
     #premultiplying by a diagonal matrix multiplies each row by a value: https://solitaryroad.com/c108.html
     #use that to divide each row by it sum (.sum(axis=1)), then matrix multiply the result by bin coords
