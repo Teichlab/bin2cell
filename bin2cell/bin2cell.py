@@ -607,12 +607,12 @@ def get_crop(adata, basis="spatial", spatial_key="spatial", mpp=None, buffer=0):
             np.max(coords[:,0])+buffer
            )
 
-def scaled_he_image(adata, mpp=1, crop=True, buffer=500, spatial_cropped_key="spatial_cropped"):
+def scaled_he_image(adata, mpp=1, crop=True, buffer=500, spatial_cropped_key="spatial_cropped", save_path=None):
     '''
     Create a custom microns per pixel render of the full scale H&E image for 
     visualisation and downstream application. Store resulting image and its 
     corresponding size factor in the object. If cropping to just the spatial 
-    grid, also store the cropped spatial coordinates.
+    grid, also store the cropped spatial coordinates. Optionally save to file.
     
     Input
     -----
@@ -630,6 +630,9 @@ def scaled_he_image(adata, mpp=1, crop=True, buffer=500, spatial_cropped_key="sp
     spatial_cropped_key : ``str``, optional (default: ``"spatial_cropped"``)
         Only used with ``crop=True``. ``.obsm`` key to store the adjusted 
         spatial coordinates in.
+    save_path : ``filepath`` or ``None``, optional (default: ``None``)
+        If specified, will save the generated image to this path (e.g. for 
+        StarDist use).
     '''
     #identify name of spatial key for subsequent access of fields
     library = list(adata.uns['spatial'].keys())[0]
@@ -658,6 +661,9 @@ def scaled_he_image(adata, mpp=1, crop=True, buffer=500, spatial_cropped_key="sp
     adata.uns['spatial'][library]['images'][str(mpp)+"_mpp"] = img
     #the scale factor needs to be prefaced with "tissue_"
     adata.uns['spatial'][library]['scalefactors']['tissue_'+str(mpp)+"_mpp_scalef"] = scalef
+    if save_path is not None:
+        #cv2 expects BGR channel order, we're working with RGB
+        cv2.imwrite(save_path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
 
 def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial", mpp=None, labels_key="labels"):
     '''
