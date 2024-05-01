@@ -709,7 +709,7 @@ def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial"
     #insert into bin object, need to turn it into a 1d numpy array from a 1d numpy matrix first
     adata.obs[labels_key] = np.asarray(labels_sparse[coords[:,0], coords[:,1]]).flatten()
 
-def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expanded", max_bin_distance=4):
+def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expanded", max_bin_distance=4, subset_pca=True):
     '''
     Expand StarDist segmentation results to bins at most 
     ``max_bin_distance`` distance away in the array coordinates. In the event 
@@ -725,13 +725,13 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
         ``.obs`` key to store the expanded labels under.
     max_bin_distance : ``int``, optional (default: 4)
         Maximum number of bins to expand the nuclear labels by.
+    subset_pca : ``bool``, optional (default: ``True``)
+        If ``True``, will obtain the PCA representation of just the bins 
+        involved in the tie breaks rather than the full bin space. Results in 
+        a slightly different embedding at a lower resource footprint.
     '''
     #this is where the labels will go
     adata.obs[expanded_labels_key] = adata.obs[labels_key].values.copy()
-    #prepare a PCA as a representation of the GEX space for solving ties
-    #can just run straight on an array to get a PCA matrix back. convenient!
-    #keep the object's X raw for subsequent cell creation
-    pca = sc.pp.pca(np.log1p(adata.X))
     #get out our array grid, and preexisting labels
     coords = adata.obs[["array_row","array_col"]].values
     labels = adata.obs[labels_key].values
@@ -767,19 +767,35 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
     adata.obs.loc[adata.obs_names[same_query_inds], expanded_labels_key] = same_query_labels
     #third case - two bins are equidistant and the label does not agree
     ambiguous_mask = tied_mask & (calls[:,0] != calls[:,1])
-    #get their indices in the original cell space
-    ambiguous_query_inds = full_query_inds[ambiguous_mask]
-    #compute the distances between the expression profiles of the undecided bin and the neighbours
-    #np.linalg.norm is the fastest way to get euclidean, subtract two point sets beforehand
-    hit0eucl = np.linalg.norm(pca[hits[ambiguous_mask,0],:]-pca[ambiguous_query_inds,:], axis=1)
-    hit1eucl = np.linalg.norm(pca[hits[ambiguous_mask,1],:]-pca[ambiguous_query_inds,:], axis=1)
-    #can now define calls. start off as undecided
-    ambiguous_query_labels = np.zeros(ambiguous_query_inds.shape)
-    #the lower euclidean is the victor
-    ambiguous_query_labels[hit0eucl<hit1eucl] = calls[ambiguous_mask,0][hit0eucl<hit1eucl]
-    ambiguous_query_labels[hit0eucl>hit1eucl] = calls[ambiguous_mask,1][hit0eucl>hit1eucl]
-    #insert calls into object
-    adata.obs.loc[adata.obs_names[ambiguous_query_inds], expanded_labels_key] = ambiguous_query_labels
+    if np.sum(ambiguous_mask) > 0:
+        #get their indices in the original cell space
+        ambiguous_query_inds = full_query_inds[ambiguous_mask]
+        if subset_pca:
+            #in preparation of PCA, get a master list of all the bins to PCA
+            #we've got three sets - the query bins, and their two hits
+            #np.unique sorts in an ascending fashion, which is convenient
+            smol = np.unique(np.concatenate([hits[ambiguous_mask,0], hits[ambiguous_mask,1], ambiguous_query_inds]))
+            #prepare a PCA as a representation of the GEX space for solving ties
+            #can just run straight on an array to get a PCA matrix back. convenient!
+            #keep the object's X raw for subsequent cell creation
+            pca_smol = sc.pp.pca(np.log1p(adata.X[smol, :]))
+            #mock up a "full-scale" PCA matrix to not have to worry about different indices
+            pca = np.zeros((adata.shape[0], pca_smol.shape[1]))
+            pca[smol, :] = pca_smol
+        else:
+            #just run a full space PCA
+            pca = sc.pp.pca(np.log1p(adata.X))
+        #compute the distances between the expression profiles of the undecided bin and the neighbours
+        #np.linalg.norm is the fastest way to get euclidean, subtract two point sets beforehand
+        hit0eucl = np.linalg.norm(pca[hits[ambiguous_mask,0],:]-pca[ambiguous_query_inds,:], axis=1)
+        hit1eucl = np.linalg.norm(pca[hits[ambiguous_mask,1],:]-pca[ambiguous_query_inds,:], axis=1)
+        #can now define calls. start off as undecided
+        ambiguous_query_labels = np.zeros(ambiguous_query_inds.shape)
+        #the lower euclidean is the victor
+        ambiguous_query_labels[hit0eucl<hit1eucl] = calls[ambiguous_mask,0][hit0eucl<hit1eucl]
+        ambiguous_query_labels[hit0eucl>hit1eucl] = calls[ambiguous_mask,1][hit0eucl>hit1eucl]
+        #insert calls into object
+        adata.obs.loc[adata.obs_names[ambiguous_query_inds], expanded_labels_key] = ambiguous_query_labels
 
 def bin_to_cell(adata, labels_key="labels_expanded", spatial_keys=["spatial"], diameter_scale_factor=None):
     '''
