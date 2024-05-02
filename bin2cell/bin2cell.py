@@ -359,7 +359,7 @@ def destripe_counts(adata, n_counts_key="n_counts_adjusted"):
     bin_scaling = scipy.sparse.diags(adata.obs[n_counts_key]/adata.obs["n_counts"])
     adata.X = bin_scaling.dot(adata.X)
 
-def destripe(adata, quantile=0.95, adjust_counts=True):
+def destripe(adata, quantile=0.99, adjust_counts=True):
     '''
     Correct the raw counts of the input object for known variable width of 
     VisiumHD 2um bins. Scales the total UMIs per bin on a per-row and 
@@ -372,7 +372,7 @@ def destripe(adata, quantile=0.95, adjust_counts=True):
     adata : ``AnnData``
         2um bin VisiumHD object. Raw counts, needs to have ``"n_counts"`` in 
         ``.obs``.
-    quantile : ``float``, optional (default: 0.95)
+    quantile : ``float``, optional (default: 0.99)
         Which row/column quantile to use for the computation.
     adjust_counts : ``bool``, optional (default: ``True``)
         Whether to use the computed adjusted count total to adjust the counts in 
@@ -611,7 +611,7 @@ def get_crop(adata, basis="spatial", spatial_key="spatial", mpp=None, buffer=0):
             np.max(coords[:,0])+buffer
            )
 
-def scaled_he_image(adata, mpp=1, crop=True, buffer=500, spatial_cropped_key="spatial_cropped", save_path=None):
+def scaled_he_image(adata, mpp=1, crop=True, buffer=150, spatial_cropped_key="spatial_cropped", save_path=None):
     '''
     Create a custom microns per pixel render of the full scale H&E image for 
     visualisation and downstream application. Store resulting image and its 
@@ -628,7 +628,7 @@ def scaled_he_image(adata, mpp=1, crop=True, buffer=500, spatial_cropped_key="sp
     crop : ``bool``, optional (default: ``True``)
         If ``True``, will limit the image to the actual spatial coordinate area, 
         with ``buffer`` added to each dimension.
-    buffer : ``int``, optional (default: 500)
+    buffer : ``int``, optional (default: 150)
         Only used with ``crop=True``. How many extra pixels (in original 
         resolution) to include on each side of the captured spatial grid.
     spatial_cropped_key : ``str``, optional (default: ``"spatial_cropped"``)
@@ -714,7 +714,7 @@ def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial"
     #insert into bin object, need to turn it into a 1d numpy array from a 1d numpy matrix first
     adata.obs[labels_key] = np.asarray(labels_sparse[coords[:,0], coords[:,1]]).flatten()
 
-def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expanded", max_bin_distance=4, subset_pca=True):
+def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expanded", max_bin_distance=2, subset_pca=True):
     '''
     Expand StarDist segmentation results to bins at most 
     ``max_bin_distance`` distance away in the array coordinates. In the event 
@@ -730,7 +730,7 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
         unassigned to an object.
     expanded_labels_key : ``str``, optional (default: ``"labels_expanded"``)
         ``.obs`` key to store the expanded labels under.
-    max_bin_distance : ``int``, optional (default: 4)
+    max_bin_distance : ``int``, optional (default: 2)
         Maximum number of bins to expand the nuclear labels by.
     subset_pca : ``bool``, optional (default: ``True``)
         If ``True``, will obtain the PCA representation of just the bins 
