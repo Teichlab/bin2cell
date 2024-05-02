@@ -137,7 +137,7 @@ def stardist(image_path, labels_npz_path, stardist_model="2D_versatile_he", bloc
     scipy.sparse.save_npz(labels_npz_path, labels_sparse)
     print("Found "+str(len(np.unique(labels_sparse.data)))+" objects")
 
-def view_stardist_labels(image_path, labels_npz_path, crop):
+def view_stardist_labels(image_path, labels_npz_path, crop, normalize_img=True):
     '''
     Use StarDist's label rendering to view segmentation results in a crop 
     of the input image.
@@ -151,6 +151,9 @@ def view_stardist_labels(image_path, labels_npz_path, crop):
     crop : tuple of ``int``
         A PIL-formatted crop specification - a four integer tuple, 
         provided as (left, upper, right, lower) coordinates.
+    normalize_img : ``bool``, optional (default: ``True``)
+        If ``True``, will percentile-normalise the image prior to 
+        visualisation.
     '''
     #PIL is better at handling crops memory efficiently than cv2
     img = Image.open(image_path)
@@ -168,7 +171,7 @@ def view_stardist_labels(image_path, labels_npz_path, crop):
     #calling this on [5,7,7,9] yields [1,2,2,3] which is what we want
     labels_sparse.data = scipy.stats.rankdata(labels_sparse.data, method="dense")
     labels = np.array(labels_sparse.todense())
-    return render_label(labels, img=img)
+    return render_label(labels, img=img, normalize_img=normalize_img)
 
 #as PR'd to scanpy: https://github.com/scverse/scanpy/pull/2992
 def read_visium(
