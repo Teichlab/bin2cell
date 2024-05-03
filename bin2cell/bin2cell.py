@@ -37,6 +37,7 @@ import cv2
 #row/col do seem to consistenly refer to the stated np.array image dimensions though
 #spatial starts in top left corner of image, matching what np.array image is doing
 #of note, cv2 treats [:,1] as dim 0 and [:,0] as dim 1, despite working on np.arrays
+#also cv2 works with channels in a BGR order, while everything else is RGB
 
 def load_image(image_path, gray=False, dtype=np.uint8):
     '''
