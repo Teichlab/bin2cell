@@ -138,7 +138,7 @@ def stardist(image_path, labels_npz_path, stardist_model="2D_versatile_he", bloc
     scipy.sparse.save_npz(labels_npz_path, labels_sparse)
     print("Found "+str(len(np.unique(labels_sparse.data)))+" objects")
 
-def view_stardist_labels(image_path, labels_npz_path, crop, normalize_img=True):
+def view_stardist_labels(image_path, labels_npz_path, crop, **kwargs):
     '''
     Use StarDist's label rendering to view segmentation results in a crop 
     of the input image.
@@ -152,9 +152,9 @@ def view_stardist_labels(image_path, labels_npz_path, crop, normalize_img=True):
     crop : tuple of ``int``
         A PIL-formatted crop specification - a four integer tuple, 
         provided as (left, upper, right, lower) coordinates.
-    normalize_img : ``bool``, optional (default: ``True``)
-        If ``True``, will percentile-normalise the image prior to 
-        visualisation.
+    kwargs
+        Any additional arguments to pass to StarDist's ``render_labels()``. 
+        Practically most likely to be ``normalize_img``.
     '''
     #PIL is better at handling crops memory efficiently than cv2
     img = Image.open(image_path)
@@ -172,7 +172,7 @@ def view_stardist_labels(image_path, labels_npz_path, crop, normalize_img=True):
     #calling this on [5,7,7,9] yields [1,2,2,3] which is what we want
     labels_sparse.data = scipy.stats.rankdata(labels_sparse.data, method="dense")
     labels = np.array(labels_sparse.todense())
-    return render_label(labels, img=img, normalize_img=normalize_img)
+    return render_label(labels, img=img, **kwargs)
 
 #as PR'd to scanpy: https://github.com/scverse/scanpy/pull/2992
 def read_visium(
@@ -339,56 +339,68 @@ def read_visium(
 
     return adata
 
-def destripe_counts(adata, n_counts_key="n_counts_adjusted"):
+def destripe_counts(adata, counts_key="n_counts", adjusted_counts_key="n_counts_adjusted"):
     '''
-    Scale each row of ``adata.X`` to have ``n_counts_key`` rather than 
-    ``"n_counts"`` total counts.
+    Scale each row (bin) of ``adata.X`` to have ``adjusted_counts_key`` 
+    rather than ``counts_key`` total counts.
     
     Input
     -----
     adata : ``AnnData``
-        2um bin VisiumHD object. Raw counts, needs to have ``"n_counts"`` 
-        and ``n_counts_key`` in ``.obs``.
-    n_counts_key : ``str``
-        Name of ``.obs`` key storing the desired destriped counts per bin.
+        2um bin VisiumHD object. Raw counts, needs to have ``counts_key`` 
+        and ``adjusted_counts_key`` in ``.obs``.
+    counts_key : ``str``, optional (default: ``"n_counts"``)
+        Name of ``.obs`` column with raw counts per bin.
+    adjusted_counts_key : ``str``, optional (default: ``"n_counts_adjusted"``)
+        Name of ``.obs`` column storing the desired destriped counts per bin.
     '''
     #scanpy's utility function to make sure the anndata is not a view
     #if it is a view then weird stuff happens when you try to write to its .X
     sc._utils.view_to_actual(adata)
     #adjust the count matrix to have n_counts_adjusted sum per bin (row)
     #premultiplying by a diagonal matrix multiplies each row by a value: https://solitaryroad.com/c108.html
-    bin_scaling = scipy.sparse.diags(adata.obs[n_counts_key]/adata.obs["n_counts"])
+    bin_scaling = scipy.sparse.diags(adata.obs[adjusted_counts_key]/adata.obs[counts_key])
     adata.X = bin_scaling.dot(adata.X)
 
-def destripe(adata, quantile=0.99, adjust_counts=True):
+def destripe(adata, quantile=0.99, counts_key="n_counts", factor_key="destripe_factor", adjusted_counts_key="n_counts_adjusted", adjust_counts=True):
     '''
     Correct the raw counts of the input object for known variable width of 
     VisiumHD 2um bins. Scales the total UMIs per bin on a per-row and 
     per-column basis, dividing by the specified ``quantile``. The resulting 
-    value is stored in ``.obs["destripe_factor"]``, and is multiplied by 
-    the corresponding total UMI ``quantile`` to get ``.obs["n_counts_adjusted"]``.
+    value is stored in ``.obs[factor_key]``, and is multiplied by the 
+    corresponding total UMI ``quantile`` to get ``.obs[adjusted_counts_key]``.
     
     Input
     -----
     adata : ``AnnData``
-        2um bin VisiumHD object. Raw counts, needs to have ``"n_counts"`` in 
+        2um bin VisiumHD object. Raw counts, needs to have ``counts_key`` in 
         ``.obs``.
     quantile : ``float``, optional (default: 0.99)
         Which row/column quantile to use for the computation.
+    counts_key : ``str``, optional (default: ``"n_counts"``)
+        Name of ``.obs`` column with raw counts per bin.
+    factor_key : ``str``, optional (default: ``"destripe_factor"``)
+        Name of ``.obs`` column to hold computed factor prior to reversing to 
+        count space.
+    adjusted_counts_key : ``str``, optional (default: ``"n_counts_adjusted"``)
+        Name of ``.obs`` column for storing the destriped counts per bin.
     adjust_counts : ``bool``, optional (default: ``True``)
         Whether to use the computed adjusted count total to adjust the counts in 
         ``adata.X``.
     '''
     #apply destriping via sequential quantile scaling
-    quant = adata.obs.groupby("array_row")["n_counts"].quantile(quantile)
-    adata.obs["destripe_factor"] = adata.obs["n_counts"] / adata.obs["array_row"].map(quant)
-    quant = adata.obs.groupby("array_col")["destripe_factor"].quantile(quantile)
-    adata.obs["destripe_factor"] /= adata.obs["array_col"].map(quant)
-    #propose an adjusted n_counts as the global quantile multipled by the destripe factor
-    adata.obs["n_counts_adjusted"] = adata.obs["destripe_factor"] * np.quantile(adata.obs["n_counts"], quantile)
+    #get specified quantile per row
+    quant = adata.obs.groupby("array_row")[counts_key].quantile(quantile)
+    #divide each row by its quantile (order of obs[counts_key] and obs[array_row] match)
+    adata.obs[factor_key] = adata.obs[counts_key] / adata.obs["array_row"].map(quant)
+    #repeat on columns
+    quant = adata.obs.groupby("array_col")[factor_key].quantile(quantile)
+    adata.obs[factor_key] /= adata.obs["array_col"].map(quant)
+    #propose adjusted counts as the global quantile multipled by the destripe factor
+    adata.obs[adjusted_counts_key] = adata.obs[factor_key] * np.quantile(adata.obs[counts_key], quantile)
     #correct the count space unless told not to
     if adjust_counts:
-        destripe_counts(adata)
+        destripe_counts(adata, counts_key=counts_key, adjusted_counts_key=adjusted_counts_key)
 
 def check_array_coordinates(adata, row_max=3349, col_max=3349):
     '''
@@ -444,7 +456,7 @@ def check_array_coordinates(adata, row_max=3349, col_max=3349):
         else:
             adata.uns["bin2cell"]["array_check"][axis]["flipped"] = False
 
-def grid_image(adata, val, log1p=False, mpp=2, sigma=None):
+def grid_image(adata, val, log1p=False, mpp=2, sigma=None, save_path=None):
     '''
     Create an image of a specified ``val`` across the array coordinate grid. 
     Orientation matches the H&E image and spatial coordinates.
@@ -463,6 +475,9 @@ def grid_image(adata, val, log1p=False, mpp=2, sigma=None):
     sigma : ``float`` or ``None``, optional (default: ``None``)
         If not ``None``, will run the final image through 
         ``skimage.filters.gaussian()`` with the provided sigma value.
+    save_path : ``filepath`` or ``None``, optional (default: ``None``)
+        If specified, will save the generated image to this path (e.g. for 
+        StarDist use). If not provided, will return image.
     '''
     #pull out the values for the image. start by checking .obs
     if val in adata.obs.columns:
@@ -510,7 +525,11 @@ def grid_image(adata, val, log1p=False, mpp=2, sigma=None):
     if sigma is not None:
         img = skimage.filters.gaussian(img, sigma=sigma)
         img = (255 * (img-np.min(img))/(np.max(img)-np.min(img))).astype(np.uint8)
-    return img
+    #save or return image
+    if save_path is not None:
+        cv2.imwrite(save_path, img)
+    else:
+        return img
 
 def mpp_to_scalef(adata, mpp):
     '''
@@ -846,6 +865,8 @@ def salvage_secondary_labels(adata, primary_label="labels_he_expanded", secondar
     adata.obs[labels_key+"_source"] = "none"
     adata.obs.loc[adata.obs[primary_label]>0, labels_key+"_source"] = "primary"
     adata.obs.loc[mask, labels_key+"_source"] = "secondary"
+    #notify of how much was salvaged
+    print("Salvaged "+str(len(secondary_to_take))+" secondary labels")
 
 def bin_to_cell(adata, labels_key="labels_expanded", spatial_keys=["spatial"], diameter_scale_factor=None):
     '''
