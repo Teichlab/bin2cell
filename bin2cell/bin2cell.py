@@ -838,7 +838,7 @@ def salvage_secondary_labels(adata, primary_label="labels_he_expanded", secondar
         ``.obs`` key holding the main labels. Integers, with 0 being unassigned to an 
         object.
     secondary_label : ``str``, optional (default: ``"labels_gex"``)
-        ``.obs`` key holding the labels to be inserted into unassigned spots. Integers, 
+        ``.obs`` key holding the labels to be inserted into unassigned bins. Integers, 
         with 0 being unassigned to an object.
     labels_key : ``str``, optional (default: ``"labels_joint"``)
         ``.obs`` key to store the combined label information into. Will also add a 
