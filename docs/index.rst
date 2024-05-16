@@ -6,7 +6,7 @@
 Bin2cell
 ========
 
-Project home page `here <https://github.com/Teichlab/bin2cell>`_.
+Project home page `here <https://github.com/Teichlab/bin2cell>`_, demonstration notebook `here <https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/demo.ipynb>`_.
 
 Main workflow functions
 -----------------------
