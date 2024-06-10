@@ -6,8 +6,6 @@ Bin2cell proposes 2um bin to cell groupings based on segmentation, which can be 
 
 <p align="center"><img src="https://github.com/Teichlab/bin2cell/blob/main/figure.jpg" alt="Label evolution" width="80%" ></p>
 
-![]()
-
 ## Installation
 
 ```bash
