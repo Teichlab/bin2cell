@@ -17,3 +17,7 @@ Additionally, TensorFlow needs to be installed for [StarDist](https://github.com
 ## Usage and Documentation
 
 Please refer to the [demo notebook](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/demo.ipynb). Function docstrings are available on [ReadTheDocs](https://bin2cell.readthedocs.io/en/latest/).
+
+The repository also has notebooks comparing bin2cell output to standard 8um SpaceRanger output:
+- Mouse brain [bin2cell](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N1_demo_b2c_mouse_brain_submission.ipynb) and [downstream analysis](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N2_demo_analysis_mouse_brain_submission.ipynb)
+- Human colorectal cancer [bin2cell](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N1_demo_b2c_crc_submission.ipynb) and [downstream analysis](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N2_demo_analysis_crc_submission.ipynb)
