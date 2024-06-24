@@ -21,3 +21,7 @@ Please refer to the [demo notebook](https://nbviewer.org/github/Teichlab/bin2cel
 The repository also has notebooks comparing bin2cell output to standard 8um SpaceRanger output:
 - Mouse brain [bin2cell](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N1_demo_b2c_mouse_brain_submission.ipynb) and [downstream analysis](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N2_demo_analysis_mouse_brain_submission.ipynb)
 - Human colorectal cancer [bin2cell](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N1_demo_b2c_crc_submission.ipynb) and [downstream analysis](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N2_demo_analysis_crc_submission.ipynb)
+
+## Citation
+
+Please cite our [preprint](https://www.biorxiv.org/content/10.1101/2024.06.19.599766v1).
