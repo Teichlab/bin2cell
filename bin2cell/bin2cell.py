@@ -12,6 +12,7 @@ from matplotlib.image import imread
 #the ones above are for read_visium_hd()
 from stardist.plot import render_label
 from copy import deepcopy
+import tifffile as tf
 import scipy.spatial
 import scipy.sparse
 import scipy.stats
@@ -688,6 +689,73 @@ def scaled_he_image(adata, mpp=1, crop=True, buffer=150, spatial_cropped_key="sp
     if save_path is not None:
         #cv2 expects BGR channel order, we're working with RGB
         cv2.imwrite(save_path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+
+def scaled_if_image(adata, channel, mpp=1, crop=True, buffer=150, spatial_cropped_key="spatial_cropped", save_path=None):
+    '''
+    Create a custom microns per pixel render of the full scale IF image for 
+    visualisation and downstream application. Store resulting image and its 
+    corresponding size factor in the object. If cropping to just the spatial 
+    grid, also store the cropped spatial coordinates. Optionally save to file.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin VisiumHD object. Path to high resolution IF image provided via 
+        ``source_image_path`` to ``b2c.read_visium_hd()``.
+    channel : ``int``
+        The channel of the IF image holding the DAPI capture.
+    mpp : ``float``, optional (default: 1)
+        Microns per pixel of the desired IF image to create.
+    crop : ``bool``, optional (default: ``True``)
+        If ``True``, will limit the image to the actual spatial coordinate area, 
+        with ``buffer`` added to each dimension.
+    buffer : ``int``, optional (default: 150)
+        Only used with ``crop=True``. How many extra pixels (in original 
+        resolution) to include on each side of the captured spatial grid.
+    spatial_cropped_key : ``str``, optional (default: ``"spatial_cropped"``)
+        Only used with ``crop=True``. ``.obsm`` key to store the adjusted 
+        spatial coordinates in.
+    save_path : ``filepath`` or ``None``, optional (default: ``None``)
+        If specified, will save the generated image to this path (e.g. for 
+        StarDist use).
+    '''
+    #identify name of spatial key for subsequent access of fields
+    library = list(adata.uns['spatial'].keys())[0]
+    #pull out specified channel from IF tiff via tifffile
+    #pretype to float32 for space while working with plots (float16 does not)
+    img = tf.imread(adata.uns['spatial'][library]['metadata']['source_image_path'], key=channel).astype(np.float32)
+    #this can be dark, apply stardist normalisation to fix
+    img = normalize(img)
+    #actually cap the values - currently there are sub 0 and above 1 entries
+    img[img<0] = 0
+    img[img>1] = 1
+    #crop image if necessary
+    if crop:
+        crop_coords = get_crop(adata, basis="spatial", spatial_key="spatial", mpp=None, buffer=buffer)
+        #this is already capped at a minimum of 0, so can just subset freely
+        #left, upper, right, lower; image is up-down, left-right
+        img = img[crop_coords[1]:crop_coords[3], crop_coords[0]:crop_coords[2]]
+        #need to move spatial so it starts at the new crop top left point
+        #spatial[:,1] is up-down, spatial[:,0] is left-right
+        adata.obsm[spatial_cropped_key] = adata.obsm["spatial"].copy()
+        adata.obsm[spatial_cropped_key][:,0] -= crop_coords[0]
+        adata.obsm[spatial_cropped_key][:,1] -= crop_coords[1]
+    #reshape image to desired microns per pixel
+    #get necessary scale factor for the custom mpp
+    #multiply dimensions by this to get the shrunken image size
+    #multiply .obsm['spatial'] by this to get coordinates matching the image
+    scalef = mpp_to_scalef(adata, mpp=mpp)
+    #need to reverse dimension order and turn to int for cv2
+    dim = (np.array(img.shape[:2])*scalef).astype(int)[::-1]
+    img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+    #we have everything we need. store in object
+    adata.uns['spatial'][library]['images'][str(mpp)+"_mpp"] = img
+    #the scale factor needs to be prefaced with "tissue_"
+    adata.uns['spatial'][library]['scalefactors']['tissue_'+str(mpp)+"_mpp_scalef"] = scalef
+    if save_path is not None:
+        #cv2 expects BGR channel order, we have a greyscale image
+        #oh also we should make it a uint8 as otherwise stuff won't work
+        cv2.imwrite(save_path, cv2.cvtColor((255*img).astype(np.uint8), cv2.COLOR_GRAY2BGR))
 
 def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial", mpp=None, labels_key="labels"):
     '''
