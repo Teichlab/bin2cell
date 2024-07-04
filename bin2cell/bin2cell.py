@@ -730,9 +730,19 @@ def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial"
     adata.uns["bin2cell"]["labels_npz_paths"][labels_key] = npz_prefix + labels_npz_path
     #get the appropriate coordinates, be they spatial or array, at appropriate mpp
     coords = get_mpp_coords(adata, basis=basis, spatial_key=spatial_key, mpp=mpp)
+    #there is a possibility that some coordinates will fall outside labels_sparse
+    #start by pregenerating an obs column of all zeroes so all bins are covered
+    adata.obs[labels_key] = 0
+    #can now construct a mask defining which coordinates fall within range
+    #apply the mask to the coords and the obs to just go for the relevant bins
+    mask = ((coords[:,0] >= 0) & 
+            (coords[:,0] < labels_sparse.shape[0]) & 
+            (coords[:,1] >= 0) & 
+            (coords[:,1] < labels_sparse.shape[1])
+           )
     #pull out the cell labels for the coordinates, can just index the sparse matrix with them
     #insert into bin object, need to turn it into a 1d numpy array from a 1d numpy matrix first
-    adata.obs[labels_key] = np.asarray(labels_sparse[coords[:,0], coords[:,1]]).flatten()
+    adata.obs.loc[mask, labels_key] = np.asarray(labels_sparse[coords[mask,0], coords[mask,1]]).flatten()
 
 def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expanded", max_bin_distance=2, subset_pca=True):
     '''
