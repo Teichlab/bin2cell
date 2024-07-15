@@ -14,6 +14,7 @@ Main workflow functions
    :toctree:
    
    bin2cell.scaled_he_image
+   bin2cell.scaled_if_image
    bin2cell.destripe
    bin2cell.grid_image
    bin2cell.stardist
