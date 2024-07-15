@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from scanpy import read_10x_h5
+from scanpy import logging as logg
 
 import json
 from pathlib import Path, PurePath
