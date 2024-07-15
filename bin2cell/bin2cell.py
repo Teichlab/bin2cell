@@ -10,7 +10,7 @@ import pandas as pd
 from matplotlib.image import imread
 
 #actual bin2cell dependencies start here
-#the ones above are for read_visium_hd()
+#the ones above are for read_visium()
 from stardist.plot import render_label
 from copy import deepcopy
 import tifffile as tf
@@ -654,7 +654,7 @@ def scaled_he_image(adata, mpp=1, crop=True, buffer=150, spatial_cropped_key="sp
     -----
     adata : ``AnnData``
         2um bin VisiumHD object. Path to high resolution H&E image provided via 
-        ``source_image_path`` to ``b2c.read_visium_hd()``.
+        ``source_image_path`` to ``b2c.read_visium()``.
     mpp : ``float``, optional (default: 1)
         Microns per pixel of the desired H&E image to create.
     crop : ``bool``, optional (default: ``True``)
@@ -712,7 +712,7 @@ def scaled_if_image(adata, channel, mpp=1, crop=True, buffer=150, spatial_croppe
     -----
     adata : ``AnnData``
         2um bin VisiumHD object. Path to high resolution IF image provided via 
-        ``source_image_path`` to ``b2c.read_visium_hd()``.
+        ``source_image_path`` to ``b2c.read_visium()``.
     channel : ``int``
         The channel of the IF image holding the DAPI capture.
     mpp : ``float``, optional (default: 1)
