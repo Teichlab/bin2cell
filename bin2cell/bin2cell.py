@@ -603,9 +603,9 @@ def get_mpp_coords(adata, basis="spatial", spatial_key="spatial", mpp=None):
         #need to flip axes maybe
         #need to scale up maximum appropriately
         if adata.uns["bin2cell"]["array_check"]["row"]["flipped"]:
-            coords[:,0] = int(adata.uns["bin2cell"]["array_check"]["row"]["max"]*scalef) - coords[:,0]
+            coords[:,0] = np.round(adata.uns["bin2cell"]["array_check"]["row"]["max"]*scalef).astype(int) - coords[:,0]
         if adata.uns["bin2cell"]["array_check"]["col"]["flipped"]:
-            coords[:,1] = int(adata.uns["bin2cell"]["array_check"]["col"]["max"]*scalef) - coords[:,1]
+            coords[:,1] = np.round(adata.uns["bin2cell"]["array_check"]["col"]["max"]*scalef).astype(int) - coords[:,1]
     return coords
 
 def get_crop(adata, basis="spatial", spatial_key="spatial", mpp=None, buffer=0):
