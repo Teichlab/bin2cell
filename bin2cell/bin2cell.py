@@ -565,7 +565,9 @@ def get_mpp_coords(adata, basis="spatial", spatial_key="spatial", mpp=None):
     '''
     Get an mpp-adjusted representation of spatial or array coordinates of the 
     provided object. Origin in top left, dimensions correspond to ``np.array()`` 
-    representation of image (``[:,0]`` is up-down, ``[:,1]`` is left-right).
+    representation of image (``[:,0]`` is up-down, ``[:,1]`` is left-right). 
+    The resulting coordinates are integers for ease of retrieval of labels from 
+    arrays or defining crops.
     
     adata : ``AnnData``
         2um bin VisiumHD object.
