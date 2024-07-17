@@ -6,6 +6,7 @@ build-backend = "flit_core.buildapi"
 name = "bin2cell"
 authors = [{name = "Krzysztof Polanski, Nadav Yayon", email = "kp9@sanger.ac.uk"}]
 license = {file = "LICENSE"}
+readme = {file = "README.md", content-type="text/markdown"}
 classifiers = ["License :: OSI Approved :: MIT License"]
 dynamic = ["version", "description"]
 dependencies = [
