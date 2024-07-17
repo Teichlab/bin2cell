@@ -15,6 +15,17 @@ release = b2c.__version__
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
+# TOC only in sidebar
+master_doc = "contents"
+html_sidebars = {
+    "**": [
+        "globaltoc.html",
+        "relations.html",
+        "sourcelink.html",
+        "searchbox.html",
+    ],
+}
+
 extensions = ['sphinx.ext.autodoc', 'sphinx.ext.autosummary']
 
 templates_path = ['_templates']
