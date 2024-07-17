@@ -8,7 +8,20 @@ The other important parameters of the StarDist model are (1) the object probabil
 Example 1 - ``mpp``
 -------------------
 
-Example 1
+One of the 10X demo Visium HD datasets has an IF image of the lung. A first pass at segmentation was performed on a ``mpp=0.5`` image, with ``prob_thresh=0.1``. This resulted in a number of identified objects containing multiple nuclei.
+
+.. image:: images/mpp1.png
+  :width: 100%
+
+In an attempt to tease apart the fused nuclei without changing the ``mpp``, ``nms_thresh`` was raised all the way to 0.7 while ``prob_thresh`` was also increased to 0.4 to try to add more stringency. This did not manage to tease the nuclei apart, but a second peripheral object started showing up around the outskirts of one of the erroneously merged pairs. As such, StarDist was expecting to find larger objects than ones captured in the image.
+
+.. image:: images/mpp2.png
+  :width: 100%
+
+A new image with ``mpp=0.35`` was generated, and ``prob_thresh`` was set back to 0.1. The segmentation drastically improved.
+
+.. image:: images/mpp3.png
+  :width: 100%
 
 Example 2 - ``prob_thresh``
 ---------------------------
