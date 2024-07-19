@@ -5,8 +5,8 @@ The utility and performance of specific StarDist models (H&E or fluorescence) is
 
 The other important parameters of the StarDist model are (1) the object probability threshold ``prob_thresh`` which is the cutoff of inclusion of a segmented object in the nuclei prediction. A lower cutoff would include more cells but might lead to more false positives. (2) ``nms_thresh`` tells the model what is the expected overlap between objects. If the nuclei are very dense they would also be expected to overlap in the image.
 
-Example 1 - ``mpp``
--------------------
+Example - ``mpp``
+-----------------
 
 One of the 10X demo Visium HD datasets has an IF image of the lung. A first pass at segmentation was performed on a ``mpp=0.5`` image, with ``prob_thresh=0.1``. This resulted in a number of identified objects containing multiple nuclei.
 
@@ -23,7 +23,3 @@ A new image with ``mpp=0.35`` was generated, and ``prob_thresh`` was set back to
 .. image:: images/mpp3.png
   :width: 100%
 
-Example 2 - ``prob_thresh``
----------------------------
-
-Example 2
