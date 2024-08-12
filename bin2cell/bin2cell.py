@@ -834,6 +834,7 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
     with 0 being unassigned to an object.
     
     Input
+    -----
     adata : ``AnnData``
         2um bin VisiumHD object. Raw or destriped counts.
     labels_key : ``str``, optional (default: ``"labels"``)
