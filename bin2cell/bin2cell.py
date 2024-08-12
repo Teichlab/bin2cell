@@ -825,13 +825,13 @@ def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial"
     #insert into bin object, need to turn it into a 1d numpy array from a 1d numpy matrix first
     adata.obs.loc[mask, labels_key] = np.asarray(labels_sparse[coords[mask,0], coords[mask,1]]).flatten()
 
-def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expanded", max_bin_distance=2, subset_pca=True):
+def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expanded", max_bin_distance=2, volume_ratio=4, k=4, subset_pca=True):
     '''
-    Expand StarDist segmentation results to bins at most 
-    ``max_bin_distance`` distance away in the array coordinates. In the event 
-    of two equidistant bins with different labels, ties are broken by choosing 
-    the closer bin in a PCA representation of gene expression. The resulting 
-    labels will be integers, with 0 being unassigned to an object.
+    Expand StarDist segmentation results to bins a maximum distance away in 
+    the array coordinates. In the event of multiple equidistant bins with 
+    different labels, ties are broken by choosing the closest bin in a PCA 
+    representation of gene expression. The resulting labels will be integers, 
+    with 0 being unassigned to an object.
     
     Input
     adata : ``AnnData``
@@ -841,8 +841,18 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
         unassigned to an object.
     expanded_labels_key : ``str``, optional (default: ``"labels_expanded"``)
         ``.obs`` key to store the expanded labels under.
-    max_bin_distance : ``int``, optional (default: 2)
-        Maximum number of bins to expand the nuclear labels by.
+    max_bin_distance : ``int`` or ``None``, optional (default: 2)
+        Maximum number of bins to expand the nuclear labels by. Specifying 
+        ``None`` will use the per-label expansion detailed below.
+    volume_ratio : ``float``, optional (default: 4)
+        If ``max_bin_distance = None``, a per-label expansion will be proposed 
+        as ``ceil((volume_ratio**(1/3)-1) * sqrt(n_bins/pi))``, where 
+        ``n_bins`` is the number of bins for the corresponding pre-expansion 
+        label. Default based on cell line 
+        `data <https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8893647/>`_
+    k : ``int``, optional (default: 4)
+        Number of assigned spatial coordinate bins to find as potential nearest 
+        neighbours for each unassigned bin.
     subset_pca : ``bool``, optional (default: ``True``)
         If ``True``, will obtain the PCA representation of just the bins 
         involved in the tie breaks rather than the full bin space. Results in 
@@ -858,41 +868,59 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
     #get their indices in cell space
     full_reference_inds = np.arange(adata.shape[0])[object_mask]
     full_query_inds = np.arange(adata.shape[0])[~object_mask]
-    #for each unassigned bin, we'll find its two nearest neighbours in the assigned space
+    #for each unassigned bin, we'll find its k nearest neighbours in the assigned space
     #build a reference using the assigned bins' coordinates
     ckd = scipy.spatial.cKDTree(coords[object_mask, :])
     #query it using the unassigned bins' coordinates
-    dists, hits = ckd.query(x=coords[~object_mask,:], k=2, workers=-1)
+    dists, hits = ckd.query(x=coords[~object_mask,:], k=k, workers=-1)
     #convert the identified indices back to the full cell space
     hits = full_reference_inds[hits]
     #get the label calls for each of the hits
     calls = labels[hits]
-    #first case - one bin is closer than the others
-    clear_mask = ((dists[:,0]<dists[:,1]) & (dists[:,0]<=max_bin_distance))
-    #get their indices in the original cell space
+    #get the area (bin count) of each object
+    label_values, label_counts = np.unique(labels, return_counts=True)
+    if max_bin_distance is None:
+        #compute the object's sphere's radius as sqrt(nbin/pi)
+        #scale to radius of cell by multiplying by volume_ratio^(1/3)
+        #and subtract away the original radius to account for presence of nucleus
+        #do a ceiling to compensate for possible reduction of area in slice
+        label_distances = np.ceil((volume_ratio**(1/3)-1) * np.sqrt(label_counts/np.pi))
+        #get an array where you can index on object and get the distance
+        #needs +1 as the max value of label_values is actually present in the data
+        label_distance_array = np.zeros((np.max(label_values)+1,))
+        label_distance_array[label_values] = label_distances
+    else:
+        #just use the provided value
+        label_distance_array = np.ones((np.max(label_values)+1,)) * max_bin_distance
+    #construct a matching dimensionality array of max distance allowed per call
+    max_call_distance = label_distance_array[calls]
+    #mask bins too far away from call with arbitrary high value
+    dist_mask = 1000
+    dists[dists > max_call_distance] = dist_mask
+    #evaluate the minima in each row. start by getting said minima
+    min_per_bin = np.min(dists, axis=1)[:,None]
+    #now get positions in each row that have the minimum (and aren't the mask)
+    is_hit = (dists == min_per_bin) & (min_per_bin < dist_mask)
+    #case one - we have a solitary hit of the minimum
+    clear_mask = (np.sum(is_hit, axis=1) == 1)
+    #get out the indices of the bins
     clear_query_inds = full_query_inds[clear_mask]
-    clear_query_labels = calls[clear_mask,0]
+    #np.argmin(axis=1) finds the column of the minimum per row
+    #subsequently retrieve the matching hit from calls
+    clear_query_labels = calls[clear_mask, np.argmin(dists[clear_mask, :], axis=1)]
     #insert calls into object
-    adata.obs.loc[adata.obs_names[clear_query_inds], expanded_labels_key] = clear_query_labels   
-    #second case - two bins are equidistant and share a label
-    #start by defining a general tied mask of "two bins are equidistant and close enough"
-    tied_mask = ((dists[:,0]==dists[:,1]) & (dists[:,0]<=max_bin_distance))
-    same_mask = tied_mask & (calls[:,0] == calls[:,1])
-    #get their indices in the original cell space
-    same_query_inds = full_query_inds[same_mask]
-    same_query_labels = calls[same_mask,0]
-    #insert calls into object
-    adata.obs.loc[adata.obs_names[same_query_inds], expanded_labels_key] = same_query_labels
-    #third case - two bins are equidistant and the label does not agree
-    ambiguous_mask = tied_mask & (calls[:,0] != calls[:,1])
+    adata.obs.loc[adata.obs_names[clear_query_inds], expanded_labels_key] = clear_query_labels
+    #case two - 2+ assigned bins are equidistant
+    ambiguous_mask = (np.sum(is_hit, axis=1) > 1)
     if np.sum(ambiguous_mask) > 0:
         #get their indices in the original cell space
         ambiguous_query_inds = full_query_inds[ambiguous_mask]
         if subset_pca:
             #in preparation of PCA, get a master list of all the bins to PCA
-            #we've got three sets - the query bins, and their two hits
+            #we've got two sets - the query bins, and their k hits
+            #the hits needs to be .flatten()ed after masking to become 1d again
             #np.unique sorts in an ascending fashion, which is convenient
-            smol = np.unique(np.concatenate([hits[ambiguous_mask,0], hits[ambiguous_mask,1], ambiguous_query_inds]))
+            smol = np.unique(np.concatenate([hits[ambiguous_mask,:].flatten(), ambiguous_query_inds]))
             #prepare a PCA as a representation of the GEX space for solving ties
             #can just run straight on an array to get a PCA matrix back. convenient!
             #keep the object's X raw for subsequent cell creation
@@ -905,13 +933,18 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
             pca = sc.pp.pca(np.log1p(adata.X))
         #compute the distances between the expression profiles of the undecided bin and the neighbours
         #np.linalg.norm is the fastest way to get euclidean, subtract two point sets beforehand
-        hit0eucl = np.linalg.norm(pca[hits[ambiguous_mask,0],:]-pca[ambiguous_query_inds,:], axis=1)
-        hit1eucl = np.linalg.norm(pca[hits[ambiguous_mask,1],:]-pca[ambiguous_query_inds,:], axis=1)
-        #can now define calls. start off as undecided
-        ambiguous_query_labels = np.zeros(ambiguous_query_inds.shape)
-        #the lower euclidean is the victor
-        ambiguous_query_labels[hit0eucl<hit1eucl] = calls[ambiguous_mask,0][hit0eucl<hit1eucl]
-        ambiguous_query_labels[hit0eucl>hit1eucl] = calls[ambiguous_mask,1][hit0eucl>hit1eucl]
+        #pca[hits[ambiguous_mask, :]] is bins by k by num_pcs
+        #pca[ambiguous_query_inds, :] is bins by num_pcs
+        #add the [:, None, :] and it's bins by 1 by num_pcs, and subtracts as you'd hope
+        eucl_input = pca[hits[ambiguous_mask, :]] - pca[ambiguous_query_inds, :][:, None, :]
+        #can just do this along axis=2 and get all the distances at once
+        eucl_dists = np.linalg.norm(eucl_input, axis=2)
+        #mask ineligible bins with arbitrary high value
+        eucl_mask = 1000
+        eucl_dists[~is_hit[ambiguous_mask, :]] = eucl_mask
+        #define calls based on euclidean minimum
+        #same argmin/mask logic as with clear before
+        ambiguous_query_labels = calls[ambiguous_mask, np.argmin(eucl_dists, axis=1)]
         #insert calls into object
         adata.obs.loc[adata.obs_names[ambiguous_query_inds], expanded_labels_key] = ambiguous_query_labels
 
