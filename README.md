@@ -24,4 +24,4 @@ The repository also has notebooks comparing bin2cell output to standard 8um Spac
 
 ## Citation
 
-Please cite our [preprint](https://www.biorxiv.org/content/10.1101/2024.06.19.599766v1).
+Please cite our [paper](https://doi.org/10.1093/bioinformatics/btae546).
