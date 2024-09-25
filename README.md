@@ -12,7 +12,7 @@ Bin2cell proposes 2um bin to cell groupings based on segmentation, which can be 
 pip install bin2cell
 ```
 
-Additionally, TensorFlow needs to be installed for [StarDist](https://github.com/stardist/stardist) to perform segmentation. The CPU version (installed via `pip install tensorflow`) should suffice for the scale of work performed here, but StarDist also works on GPU if available.
+Additionally, TensorFlow needs to be installed for [StarDist](https://github.com/stardist/stardist) to perform segmentation. The CPU version (installed via `pip install tensorflow`) should suffice for the scale of work performed here.
 
 ## Usage and Documentation
 
@@ -20,7 +20,7 @@ Additionally, TensorFlow needs to be installed for [StarDist](https://github.com
 
 The repository also has notebooks comparing bin2cell output to standard 8um SpaceRanger output:
 - Mouse brain [bin2cell](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N1_demo_b2c_mouse_brain_submission.ipynb) and [downstream analysis](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N2_demo_analysis_mouse_brain_submission.ipynb)
-- Human colorectal cancer [bin2cell](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N1_demo_b2c_crc_submission.ipynb) and [downstream analysis](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N2_demo_analysis_crc_submission.ipynb)
+- Human colorectal cancer [bin2cell](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N1_demo_b2c_crc_submission.ipynb) and [downstream analysis](https://nbviewer.org/github/Teichlab/bin2cell/blob/cbbda72ff2e52533ea33582f376b452e1784bc86/notebooks/N2_demo_analysis_crc_public.ipynb)
 
 ## Citation
 
