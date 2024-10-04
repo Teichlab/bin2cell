@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.1
+- add `b2c.check_bin_image_overlap()` for friendlier handling of users loading the incorrect image
+
 ## 0.3.0
 - rework `b2c.expand_labels()` to be more robust:
     - evaluate a user-controlled `k` assigned bins for each unassigned bin
