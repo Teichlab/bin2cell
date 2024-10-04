@@ -543,6 +543,33 @@ def grid_image(adata, val, log1p=False, mpp=2, sigma=None, save_path=None):
     else:
         return img
 
+def check_bin_image_overlap(adata, img, overlap_threshold=0.9):
+    '''
+    Assess the number of bins that fall within the source image coordinate 
+    space. If an insufficient proportion are captured then throw an informative 
+    error.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin Visium object.
+    img : ``np.array``
+        Loaded full resolution morphology image, prior to any cropping/scaling.
+    overlap_threshold : ``float``, optional (default: 0.9)
+        Throw the error if fewer than this fraction of bin spatial coordinates 
+        fall within the dimensions of the image.
+    '''
+    #spatial[:,1] matches img[:,0] and spatial[:,0] matches img[:,1]
+    #check how many fall within the dimensions, and get a fraction of total bin count
+    overlap = np.sum((adata.obsm["spatial"][:,1] < img.shape[0]) & (adata.obsm["spatial"][:,0] < img.shape[1])) / adata.shape[0]
+    if overlap < overlap_threshold:
+        #something is amiss. print a bunch of diagnostics
+        print("Source image dimensions: "+ str(img.shape))
+        #the end user does not need to know about the messiness of the representations
+        #pre-format the spatial maxima to match the dimensions of the image
+        print("Corresponding ``.obsm['spatial']`` maxima: "+str(np.max(adata.obsm["spatial"], axis=0)[::-1]))
+        raise ValueError("Only "+str(100*overlap)+"% of bins fall within image. Are you running with ``source_image_path`` set to the full resolution morphology image, as used for ``--image`` in Spaceranger?")
+
 def mpp_to_scalef(adata, mpp):
     '''
     Compute a scale factor for a specified mpp value.
@@ -676,6 +703,9 @@ def scaled_he_image(adata, mpp=1, crop=True, buffer=150, spatial_cropped_key="sp
     library = list(adata.uns['spatial'].keys())[0]
     #retrieve specified source image path and load it
     img = load_image(adata.uns['spatial'][library]['metadata']['source_image_path'])
+    #assess that the image actually matches the spatial coordinates
+    #if not, inform the user what image they should retrieve and use
+    check_bin_image_overlap(adata, img)
     #crop image if necessary
     if crop:
         crop_coords = get_crop(adata, basis="spatial", spatial_key="spatial", mpp=None, buffer=buffer)
@@ -737,6 +767,9 @@ def scaled_if_image(adata, channel, mpp=1, crop=True, buffer=150, spatial_croppe
     #pull out specified channel from IF tiff via tifffile
     #pretype to float32 for space while working with plots (float16 does not)
     img = tf.imread(adata.uns['spatial'][library]['metadata']['source_image_path'], key=channel).astype(np.float32)
+    #assess that the image actually matches the spatial coordinates
+    #if not, inform the user what image they should retrieve and use
+    check_bin_image_overlap(adata, img)
     #this can be dark, apply stardist normalisation to fix
     img = normalize(img)
     #actually cap the values - currently there are sub 0 and above 1 entries
