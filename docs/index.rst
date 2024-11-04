@@ -32,6 +32,7 @@ Utility functions
    bin2cell.view_stardist_labels
    bin2cell.load_image
    bin2cell.check_array_coordinates
+   bin2cell.check_bin_image_overlap
    bin2cell.mpp_to_scalef
    bin2cell.get_mpp_coords
    bin2cell.destripe_counts
