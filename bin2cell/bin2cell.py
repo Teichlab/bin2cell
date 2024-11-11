@@ -644,6 +644,7 @@ def grid_image(adata, val, log1p=False, mpp=2, sigma=None, save_path=None):
     else:
         return img
 
+#obsoleted by actual_vs_inferred_image_shape()
 def check_bin_image_overlap(adata, img, overlap_threshold=0.9):
     '''
     Assess the number of bins that fall within the source image coordinate 
@@ -670,6 +671,35 @@ def check_bin_image_overlap(adata, img, overlap_threshold=0.9):
         #pre-format the spatial maxima to match the dimensions of the image
         print("Corresponding ``.obsm['spatial']`` maxima: "+str(np.max(adata.obsm["spatial"], axis=0)[::-1]))
         raise ValueError("Only "+str(100*overlap)+"% of bins fall within image. Are you running with ``source_image_path`` set to the full resolution morphology image, as used for ``--image`` in Spaceranger?")
+
+def actual_vs_inferred_image_shape(adata, img, ratio_threshold=0.99):
+    '''
+    Compare the shape of the actual morphology image versus what the shape of 
+    the morphology image that was used for Spaceranger appears to be from 
+    information stored for the hires. If there's a mismatch throw an 
+    informative error with both sets of dimensions.
+    
+    Input
+    -----
+    adata : ``AnnData``
+        2um bin Visium object.
+    img : ``np.array``
+        Loaded full resolution morphology image, prior to any cropping/scaling.
+    ratio_threshold : ``float``, optional (default: 0.99)
+        Throw the error if any ratio of corresponding actual and inferred 
+        dimensions falls below this value.
+    '''
+    #identify name of spatial key for subsequent access of fields
+    library = list(adata.uns['spatial'].keys())[0]
+    #infer the dimensions as the shape of the hires tissue image
+    #divided by the hires scale factor
+    inferred_dim = np.array(adata.uns['spatial'][library]['images']['hires'].shape)[:2] / adata.uns['spatial'][library]['scalefactors']['tissue_hires_scalef']
+    #retrieve actual dimension as we have the full morphology image loaded
+    actual_dim = np.array(img.shape)[:2]
+    #do the two match, within some tolerance of rounding etc?
+    #divide both ways just in case
+    if np.min(np.hstack((actual_dim/inferred_dim, inferred_dim/actual_dim))) < ratio_threshold:
+        raise ValueError("Morphology image dimension mismatch. Dimensions inferred from Spaceranger output: "+str(inferred_dim)+", actual image dimensions: "+str(actual_dim)+". Are you running with ``source_image_path`` set to the full resolution morphology image, as used for ``--image`` in Spaceranger?")
 
 def mpp_to_scalef(adata, mpp):
     '''
@@ -804,9 +834,9 @@ def scaled_he_image(adata, mpp=1, crop=True, buffer=150, spatial_cropped_key="sp
     library = list(adata.uns['spatial'].keys())[0]
     #retrieve specified source image path and load it
     img = load_image(adata.uns['spatial'][library]['metadata']['source_image_path'])
-    #assess that the image actually matches the spatial coordinates
+    #assess that the image dimensions match what they're supposed to be
     #if not, inform the user what image they should retrieve and use
-    check_bin_image_overlap(adata, img)
+    actual_vs_inferred_image_shape(adata, img)
     #crop image if necessary
     if crop:
         crop_coords = get_crop(adata, basis="spatial", spatial_key="spatial", mpp=None, buffer=buffer)
@@ -878,9 +908,9 @@ def scaled_if_image(adata, channel, mpp=1, crop=True, buffer=150, spatial_croppe
     #pull out specified channel from IF tiff via tifffile
     #pretype to float32 for space while working with plots (float16 does not)
     img = tf.imread(adata.uns['spatial'][library]['metadata']['source_image_path'], key=channel).astype(np.float32)
-    #assess that the image actually matches the spatial coordinates
+    #assess that the image dimensions match what they're supposed to be
     #if not, inform the user what image they should retrieve and use
-    check_bin_image_overlap(adata, img)
+    actual_vs_inferred_image_shape(adata, img)
     #this can be dark, apply stardist normalisation to fix
     img = normalize(img)
     #actually cap the values - currently there are sub 0 and above 1 entries
