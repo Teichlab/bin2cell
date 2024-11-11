@@ -813,11 +813,16 @@ def scaled_he_image(adata, mpp=1, crop=True, buffer=150, spatial_cropped_key="sp
         #this is already capped at a minimum of 0, so can just subset freely
         #left, upper, right, lower; image is up-down, left-right
         img = img[crop_coords[1]:crop_coords[3], crop_coords[0]:crop_coords[2], :]
+        #set up the spatial cropped key if one is not passed
+        if spatial_cropped_key is None:
+            spatial_cropped_key = "spatial_cropped_"+str(buffer)+"_buffer"
         #need to move spatial so it starts at the new crop top left point
         #spatial[:,1] is up-down, spatial[:,0] is left-right
         adata.obsm[spatial_cropped_key] = adata.obsm["spatial"].copy()
         adata.obsm[spatial_cropped_key][:,0] -= crop_coords[0]
         adata.obsm[spatial_cropped_key][:,1] -= crop_coords[1]
+        #print off the spatial cropped key just in case
+        print("Cropped spatial coordinates key: "+spatial_cropped_key)
     #reshape image to desired microns per pixel
     #get necessary scale factor for the custom mpp
     #multiply dimensions by this to get the shrunken image size
@@ -827,9 +832,14 @@ def scaled_he_image(adata, mpp=1, crop=True, buffer=150, spatial_cropped_key="sp
     dim = (np.array(img.shape[:2])*scalef).astype(int)[::-1]
     img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
     #we have everything we need. store in object
-    adata.uns['spatial'][library]['images'][str(mpp)+"_mpp"] = img
+    img_key = str(mpp)+"_mpp"
+    if crop:
+        img_key = img_key+"_"+str(buffer)+"_buffer"
+    adata.uns['spatial'][library]['images'][img_key] = img
     #the scale factor needs to be prefaced with "tissue_"
-    adata.uns['spatial'][library]['scalefactors']['tissue_'+str(mpp)+"_mpp_scalef"] = scalef
+    adata.uns['spatial'][library]['scalefactors']['tissue_'+img_key+"_scalef"] = scalef
+    #print off the image key just in case
+    print("Image key: "+img_key)
     if save_path is not None:
         #cv2 expects BGR channel order, we're working with RGB
         cv2.imwrite(save_path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
@@ -882,11 +892,16 @@ def scaled_if_image(adata, channel, mpp=1, crop=True, buffer=150, spatial_croppe
         #this is already capped at a minimum of 0, so can just subset freely
         #left, upper, right, lower; image is up-down, left-right
         img = img[crop_coords[1]:crop_coords[3], crop_coords[0]:crop_coords[2]]
+        #set up the spatial cropped key if one is not passed
+        if spatial_cropped_key is None:
+            spatial_cropped_key = "spatial_cropped_"+str(buffer)+"_buffer"
         #need to move spatial so it starts at the new crop top left point
         #spatial[:,1] is up-down, spatial[:,0] is left-right
         adata.obsm[spatial_cropped_key] = adata.obsm["spatial"].copy()
         adata.obsm[spatial_cropped_key][:,0] -= crop_coords[0]
         adata.obsm[spatial_cropped_key][:,1] -= crop_coords[1]
+        #print off the spatial cropped key just in case
+        print("Cropped spatial coordinates key: "+spatial_cropped_key)
     #reshape image to desired microns per pixel
     #get necessary scale factor for the custom mpp
     #multiply dimensions by this to get the shrunken image size
@@ -896,9 +911,14 @@ def scaled_if_image(adata, channel, mpp=1, crop=True, buffer=150, spatial_croppe
     dim = (np.array(img.shape[:2])*scalef).astype(int)[::-1]
     img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
     #we have everything we need. store in object
-    adata.uns['spatial'][library]['images'][str(mpp)+"_mpp"] = img
+    img_key = str(mpp)+"_mpp"
+    if crop:
+        img_key = img_key+"_"+str(buffer)+"_buffer"
+    adata.uns['spatial'][library]['images'][img_key] = img
     #the scale factor needs to be prefaced with "tissue_"
-    adata.uns['spatial'][library]['scalefactors']['tissue_'+str(mpp)+"_mpp_scalef"] = scalef
+    adata.uns['spatial'][library]['scalefactors']['tissue_'+img_key+"_scalef"] = scalef
+    #print off the image key just in case
+    print("Image key: "+img_key)
     if save_path is not None:
         #cv2 expects BGR channel order, we have a greyscale image
         #oh also we should make it a uint8 as otherwise stuff won't work
@@ -1124,6 +1144,12 @@ def salvage_secondary_labels(adata, primary_label="labels_he_expanded", secondar
     adata.obs[labels_key+"_source"] = "none"
     adata.obs.loc[adata.obs[primary_label]>0, labels_key+"_source"] = "primary"
     adata.obs.loc[mask, labels_key+"_source"] = "secondary"
+    #stash secondary label offset as that seems potentially useful
+    if "bin2cell" not in adata.uns:
+        adata.uns["bin2cell"] = {}
+    if "secondary_label_offset" not in adata.uns["bin2cell"]:
+        adata.uns["bin2cell"]["secondary_label_offset"] = {}
+    adata.uns["bin2cell"]["secondary_label_offset"][labels_key] = offset
     #notify of how much was salvaged
     print("Salvaged "+str(len(secondary_to_take))+" secondary labels")
 
@@ -1170,6 +1196,8 @@ def bin_to_cell(adata, labels_key="labels_expanded", spatial_keys=["spatial"], d
     #create object, stash stuff
     cell_adata = ad.AnnData(X, var = adata.var)
     cell_adata.obs_names = cell_names
+    #turn the cell names back to int and stash that as metadata too
+    cell_adata.obs['object_id'] = [int(i) for i in cell_names]
     #need to bust out deepcopy here as otherwise altering the spot diameter gets back-propagated
     cell_adata.uns['spatial'] = deepcopy(adata.uns['spatial'])
     #getting the centroids (means of bin coords) involves computing a mean of each cell_to_bin row
