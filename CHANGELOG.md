@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2
+- `b2c.view_labels()` as a more lightweight, whole image level take on `b2c.view_stardist_labels()`
+- `b2c.actual_vs_inferred_image_shape()` as an image dimension based assessment of source image validity
+- custom image functions now can skip storing the image in the object, open up control over the image key, have the buffer included by default in both sets of generated keys, and print out any stored keys
+- `b2c.expand_labels()` switches algorithm control to new `algorithm` argument
+- `b2c.salvage_secondary_labels()` stores secondary label offset
+- `b2c.bin_to_cell()` stores object ID as an integer in the cell object `.obs`
+
 ## 0.3.1
 - add `b2c.check_bin_image_overlap()` for friendlier handling of users loading the incorrect image
 
