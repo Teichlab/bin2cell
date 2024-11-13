@@ -147,6 +147,8 @@ def view_stardist_labels(image_path, labels_npz_path, crop, **kwargs):
     Use StarDist's label rendering to view segmentation results in a crop 
     of the input image.
     
+    Obsoleted by ``b2c.view_labels()``.
+    
     Input
     -----
     image_path : ``filepath``
@@ -644,12 +646,13 @@ def grid_image(adata, val, log1p=False, mpp=2, sigma=None, save_path=None):
     else:
         return img
 
-#obsoleted by actual_vs_inferred_image_shape()
 def check_bin_image_overlap(adata, img, overlap_threshold=0.9):
     '''
     Assess the number of bins that fall within the source image coordinate 
     space. If an insufficient proportion are captured then throw an informative 
     error.
+    
+    Obsoleted by ``b2c.actual_vs_inferred_image_shape()``.
     
     Input
     -----
@@ -803,7 +806,7 @@ def get_crop(adata, basis="spatial", spatial_key="spatial", mpp=None, buffer=0):
             np.max(coords[:,0])+buffer
            )
 
-def scaled_he_image(adata, mpp=1, crop=True, buffer=150, spatial_cropped_key="spatial_cropped", save_path=None):
+def scaled_he_image(adata, mpp=1, crop=True, buffer=150, spatial_cropped_key=None, store=True, img_key=None, save_path=None):
     '''
     Create a custom microns per pixel render of the full scale H&E image for 
     visualisation and downstream application. Store resulting image and its 
@@ -823,9 +826,18 @@ def scaled_he_image(adata, mpp=1, crop=True, buffer=150, spatial_cropped_key="sp
     buffer : ``int``, optional (default: 150)
         Only used with ``crop=True``. How many extra pixels (in original 
         resolution) to include on each side of the captured spatial grid.
-    spatial_cropped_key : ``str``, optional (default: ``"spatial_cropped"``)
+    spatial_cropped_key : ``str`` or ``None``, optional (default: ``None``)
         Only used with ``crop=True``. ``.obsm`` key to store the adjusted 
-        spatial coordinates in.
+        spatial coordinates in. If ``None``, defaults to 
+        ``"spatial_cropped_X_buffer"``, where ``X`` is the value of ``buffer``.
+    store : ``bool``, optional (default: ``True``)
+        Whether to store the generated image within the object.
+    img_key : ``str`` or ``None``, optional (default: ``None``)
+        Only used with ``store=True``. The image key to store the image 
+        under in the object. If ``None``, defaults to ``"X_mpp_Y_buffer"``, 
+        where ``X`` is the value of ``mpp`` and ``Y`` is the value of 
+        ``buffer`` in the instance of ``crop=True``. If no cropping is to 
+        be done, defaults to ``"X_mpp"``.
     save_path : ``filepath`` or ``None``, optional (default: ``None``)
         If specified, will save the generated image to this path (e.g. for 
         StarDist use).
@@ -862,19 +874,21 @@ def scaled_he_image(adata, mpp=1, crop=True, buffer=150, spatial_cropped_key="sp
     dim = (np.array(img.shape[:2])*scalef).astype(int)[::-1]
     img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
     #we have everything we need. store in object
-    img_key = str(mpp)+"_mpp"
-    if crop:
-        img_key = img_key+"_"+str(buffer)+"_buffer"
-    adata.uns['spatial'][library]['images'][img_key] = img
-    #the scale factor needs to be prefaced with "tissue_"
-    adata.uns['spatial'][library]['scalefactors']['tissue_'+img_key+"_scalef"] = scalef
-    #print off the image key just in case
-    print("Image key: "+img_key)
+    if store:
+        if img_key is None:
+            img_key = str(mpp)+"_mpp"
+            if crop:
+                img_key = img_key+"_"+str(buffer)+"_buffer"
+        adata.uns['spatial'][library]['images'][img_key] = img
+        #the scale factor needs to be prefaced with "tissue_"
+        adata.uns['spatial'][library]['scalefactors']['tissue_'+img_key+"_scalef"] = scalef
+        #print off the image key just in case
+        print("Image key: "+img_key)
     if save_path is not None:
         #cv2 expects BGR channel order, we're working with RGB
         cv2.imwrite(save_path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
 
-def scaled_if_image(adata, channel, mpp=1, crop=True, buffer=150, spatial_cropped_key="spatial_cropped", save_path=None):
+def scaled_if_image(adata, channel, mpp=1, crop=True, buffer=150, spatial_cropped_key=None, store=True, img_key=None, save_path=None):
     '''
     Create a custom microns per pixel render of the full scale IF image for 
     visualisation and downstream application. Store resulting image and its 
@@ -896,9 +910,18 @@ def scaled_if_image(adata, channel, mpp=1, crop=True, buffer=150, spatial_croppe
     buffer : ``int``, optional (default: 150)
         Only used with ``crop=True``. How many extra pixels (in original 
         resolution) to include on each side of the captured spatial grid.
-    spatial_cropped_key : ``str``, optional (default: ``"spatial_cropped"``)
+    spatial_cropped_key : ``str`` or ``None``, optional (default: ``None``)
         Only used with ``crop=True``. ``.obsm`` key to store the adjusted 
-        spatial coordinates in.
+        spatial coordinates in. If ``None``, defaults to 
+        ``"spatial_cropped_X_buffer"``, where ``X`` is the value of ``buffer``.
+    store : ``bool``, optional (default: ``True``)
+        Whether to store the generated image within the object.
+    img_key : ``str`` or ``None``, optional (default: ``None``)
+        Only used with ``store=True``. The image key to store the image 
+        under in the object. If ``None``, defaults to ``"X_mpp_Y_buffer"``, 
+        where ``X`` is the value of ``mpp`` and ``Y`` is the value of 
+        ``buffer`` in the instance of ``crop=True``. If no cropping is to 
+        be done, defaults to ``"X_mpp"``.
     save_path : ``filepath`` or ``None``, optional (default: ``None``)
         If specified, will save the generated image to this path (e.g. for 
         StarDist use).
@@ -941,14 +964,16 @@ def scaled_if_image(adata, channel, mpp=1, crop=True, buffer=150, spatial_croppe
     dim = (np.array(img.shape[:2])*scalef).astype(int)[::-1]
     img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
     #we have everything we need. store in object
-    img_key = str(mpp)+"_mpp"
-    if crop:
-        img_key = img_key+"_"+str(buffer)+"_buffer"
-    adata.uns['spatial'][library]['images'][img_key] = img
-    #the scale factor needs to be prefaced with "tissue_"
-    adata.uns['spatial'][library]['scalefactors']['tissue_'+img_key+"_scalef"] = scalef
-    #print off the image key just in case
-    print("Image key: "+img_key)
+    if store:
+        if img_key is None:
+            img_key = str(mpp)+"_mpp"
+            if crop:
+                img_key = img_key+"_"+str(buffer)+"_buffer"
+        adata.uns['spatial'][library]['images'][img_key] = img
+        #the scale factor needs to be prefaced with "tissue_"
+        adata.uns['spatial'][library]['scalefactors']['tissue_'+img_key+"_scalef"] = scalef
+        #print off the image key just in case
+        print("Image key: "+img_key)
     if save_path is not None:
         #cv2 expects BGR channel order, we have a greyscale image
         #oh also we should make it a uint8 as otherwise stuff won't work
@@ -1009,7 +1034,7 @@ def insert_labels(adata, labels_npz_path, basis="spatial", spatial_key="spatial"
     #insert into bin object, need to turn it into a 1d numpy array from a 1d numpy matrix first
     adata.obs.loc[mask, labels_key] = np.asarray(labels_sparse[coords[mask,0], coords[mask,1]]).flatten()
 
-def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expanded", max_bin_distance=2, volume_ratio=4, k=4, subset_pca=True):
+def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expanded", algorithm="max_bin_distance", max_bin_distance=2, volume_ratio=4, k=4, subset_pca=True):
     '''
     Expand StarDist segmentation results to bins a maximum distance away in 
     the array coordinates. In the event of multiple equidistant bins with 
@@ -1026,12 +1051,14 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
         unassigned to an object.
     expanded_labels_key : ``str``, optional (default: ``"labels_expanded"``)
         ``.obs`` key to store the expanded labels under.
+    algorithm : ``str``, optional (default: ``"max_bin_distance"``)
+        Toggle between ``max_bin_distance`` or ``volume_ratio`` based label 
+        expansion.
     max_bin_distance : ``int`` or ``None``, optional (default: 2)
-        Maximum number of bins to expand the nuclear labels by. Specifying 
-        ``None`` will use the per-label expansion detailed below.
+        Maximum number of bins to expand the nuclear labels by.
     volume_ratio : ``float``, optional (default: 4)
-        If ``max_bin_distance = None``, a per-label expansion will be proposed 
-        as ``ceil((volume_ratio**(1/3)-1) * sqrt(n_bins/pi))``, where 
+        A per-label expansion distance will be proposed as 
+        ``ceil((volume_ratio**(1/3)-1) * sqrt(n_bins/pi))``, where 
         ``n_bins`` is the number of bins for the corresponding pre-expansion 
         label. Default based on cell line 
         `data <https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8893647/>`_
@@ -1064,7 +1091,11 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
     calls = labels[hits]
     #get the area (bin count) of each object
     label_values, label_counts = np.unique(labels, return_counts=True)
+    #this is how the algorithm was toggled early on
+    #switched to an argument to avoid potential future spaghetti
     if max_bin_distance is None:
+        raise ValueError("Use ``algorithm`` to toggle between algorithms")
+    if algorithm == "volume_ratio":
         #compute the object's sphere's radius as sqrt(nbin/pi)
         #scale to radius of cell by multiplying by volume_ratio^(1/3)
         #and subtract away the original radius to account for presence of nucleus
@@ -1074,9 +1105,11 @@ def expand_labels(adata, labels_key="labels", expanded_labels_key="labels_expand
         #needs +1 as the max value of label_values is actually present in the data
         label_distance_array = np.zeros((np.max(label_values)+1,))
         label_distance_array[label_values] = label_distances
-    else:
+    elif algorithm == "max_bin_distance":
         #just use the provided value
         label_distance_array = np.ones((np.max(label_values)+1,)) * max_bin_distance
+    else:
+        raise ValueError("``algorithm`` must be ``'max_bin_distance'`` or ``'volume_ratio'``")
     #construct a matching dimensionality array of max distance allowed per call
     max_call_distance = label_distance_array[calls]
     #mask bins too far away from call with arbitrary high value
