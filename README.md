@@ -29,3 +29,16 @@ Write out your objects as `.h5ad`s and use [schard](https://github.com/cellgeni/
 ## Citation
 
 Please cite our [paper](https://doi.org/10.1093/bioinformatics/btae546).
+
+```
+@article{polanski2024bin2cell,
+  title={Bin2cell reconstructs cells from high resolution Visium HD data},
+  author={Pola{\'n}ski, Krzysztof and Bartolom{\'e}-Casado, Raquel and Sarropoulos, Ioannis and Xu, Chuan and England, Nick and Jahnsen, Frode L and Teichmann, Sarah A and Yayon, Nadav},
+  journal={Bioinformatics},
+  volume={40},
+  number={9},
+  pages={btae546},
+  year={2024},
+  publisher={Oxford University Press}
+}
+```
