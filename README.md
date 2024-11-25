@@ -22,6 +22,10 @@ The repository also has notebooks comparing bin2cell output to standard 8um Spac
 - Mouse brain [bin2cell](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N1_demo_b2c_mouse_brain_submission.ipynb) and [downstream analysis](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N2_demo_analysis_mouse_brain_submission.ipynb)
 - Human colorectal cancer [bin2cell](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N1_demo_b2c_crc_submission.ipynb) and [downstream analysis](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/notebooks/N2_demo_analysis_crc_public.ipynb)
 
+## Using bin2cell output from R
+
+Write out your objects as `.h5ad`s and use [schard](https://github.com/cellgeni/schard) to read them.
+
 ## Citation
 
 Please cite our [paper](https://doi.org/10.1093/bioinformatics/btae546).
