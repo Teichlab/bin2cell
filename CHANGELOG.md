@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.3
+- `b2c.view_cell_labels()` to show cell-level metadata on the morphology segmentation
+
 ## 0.3.2
 - `b2c.view_labels()` as a more lightweight, whole image level take on `b2c.view_stardist_labels()`
 - `b2c.actual_vs_inferred_image_shape()` as an image dimension based assessment of source image validity
