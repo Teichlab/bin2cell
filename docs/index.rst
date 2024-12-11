@@ -30,11 +30,13 @@ Utility functions
    
    bin2cell.get_crop
    bin2cell.view_labels
+   bin2cell.view_cell_labels
    bin2cell.load_image
    bin2cell.check_array_coordinates
    bin2cell.actual_vs_inferred_image_shape
    bin2cell.mpp_to_scalef
    bin2cell.get_mpp_coords
+   bin2cell.overlay_onto_img
    bin2cell.destripe_counts
 
 Obsoleted functions
