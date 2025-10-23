@@ -11,7 +11,6 @@ from matplotlib.image import imread
 
 #actual bin2cell dependencies start here
 #the ones above are for read_visium()
-from stardist.plot import render_label
 from copy import deepcopy
 import skimage.segmentation
 import tifffile as tf
@@ -83,7 +82,7 @@ def normalize(img):
     ma = np.percentile(img,99.8)
     return ((img - mi) / ( ma - mi + eps ))
 
-def stardist(image_path, labels_npz_path, stardist_model="2D_versatile_he", block_size=4096, min_overlap=128, context=128, **kwargs):
+def stardist(image_path, labels_npz_path, stardist_model="2D_versatile_he", block_size=4096, min_overlap=128, context=128, model=None, model_axes=None, **kwargs):
     '''
     Segment an image with StarDist. Supports both the fluorescence and 
     H&E models. The identified object labels will be converted to a 
@@ -109,26 +108,42 @@ def stardist(image_path, labels_npz_path, stardist_model="2D_versatile_he", bloc
     context : ``int``, optional (default: 128)
         StarDist ``predict_instances_big()`` input. Amount of image context 
         on all sides of a block, which is discarded.
+    model : ``StarDist2D`` or ``None``, optional (default: ``None``)
+        A custom loaded ``StarDist2D`` to use for the segmentation. Will 
+        ignore ``stardist_model`` if provided.
+    model_axes : ``str`` or ``None``, optional (default: ``None``)
+        If using a custom model, specify its axes, matching information from 
+        the input image. For context, for ``"2D_versatile_he"`` the axes are 
+        YXC, for ``"2D_versatile_fluo"`` the axes are YX.
     kwargs
         Any additional arguments to pass to StarDist. Practically most likely 
         to be ``prob_thresh`` for controlling the stringency of calling 
         objects.
     '''
-    #using stardist models requires tensorflow, avoid global import
+    #avoid global stardist import
     from stardist.models import StarDist2D
+    #sanity check our possible custom model input before we proceed
+    if model is not None and model_axes is None:
+        raise ValueError("``model_axes`` needs to be set if passing ``model``")
     #load and percentile normalize image, following stardist demo protocol
     #turn it to np.float16 pre normalisation to keep RAM footprint minimal
     img = load_image(image_path, gray=(stardist_model=="2D_versatile_fluo"), dtype=np.float16)
     img = normalize(img)
-    #use pretrained stardist model
-    model = StarDist2D.from_pretrained(stardist_model)
-    #will need to specify axes shortly, which are model dependent
-    if stardist_model == "2D_versatile_he":
-        #3D image, got the axes YXC from the H&E model config.json
-        model_axes = "YXC"
-    elif stardist_model == "2D_versatile_fluo":
-        #2D image, got the axes YX from logic and trying and it working
-        model_axes = "YX"
+    #use pretrained stardist model if one hasn't been provided
+    if model is None:
+        model = StarDist2D.from_pretrained(stardist_model)
+        #will need to specify axes shortly, which are model dependent
+        if stardist_model == "2D_versatile_he":
+            #3D image, got the axes YXC from the H&E model config.json
+            model_axes = "YXC"
+        elif stardist_model == "2D_versatile_fluo":
+            #2D image, got the axes YX from logic and trying and it working
+            model_axes = "YX"
+    #print out prob_thresh/nms_thresh overrides if present in kwargs
+    if "prob_thresh" in kwargs:
+        print("Overriding with prob_thresh="+str(kwargs["prob_thresh"]))
+    if "nms_thresh" in kwargs:
+        print("Overriding with nms_thresh="+str(kwargs["nms_thresh"]))
     #run predict_instances_big() to perform automated tiling of the input
     #this is less parameterised than predict_instances, needed to pass axes too
     #pass any other **kwargs to the thing, passing them on internally
@@ -164,6 +179,8 @@ def view_stardist_labels(image_path, labels_npz_path, crop, **kwargs):
         Any additional arguments to pass to StarDist's ``render_labels()``. 
         Practically most likely to be ``normalize_img``.
     '''
+    #avoid global stardist import
+    from stardist.plot import render_label
     #PIL is better at handling crops memory efficiently than cv2
     img = Image.open(image_path)
     img = img.crop(crop)

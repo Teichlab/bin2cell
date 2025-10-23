@@ -10,13 +10,18 @@ readme = {file = "README.md", content-type="text/markdown"}
 classifiers = ["License :: OSI Approved :: MIT License"]
 dynamic = ["version", "description"]
 dependencies = [
-    "numpy < 2",
     "scanpy",
-    "stardist",
     "opencv-python",
+    "scikit-image",
     "fastparquet"
 ]
 requires-python = ">=3.7"
+
+[project.optional-dependencies]
+stardist = [
+    "numpy < 2",
+    "stardist"
+]
 
 [project.urls]
 Home = "https://github.com/Teichlab/bin2cell"

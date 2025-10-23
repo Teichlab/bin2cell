@@ -12,7 +12,13 @@ Bin2cell proposes 2um bin to cell groupings based on segmentation, which can be 
 pip install bin2cell
 ```
 
-Additionally, TensorFlow needs to be installed for [StarDist](https://github.com/stardist/stardist) to perform segmentation. The CPU version (installed via `pip install tensorflow`) should suffice for the scale of work performed here.
+For `b2c.stardist()` to work, [StarDist](https://github.com/stardist/stardist) needs to be installed. Bin2cell comes with a dependency group to handle this:
+
+```bash
+pip install bin2cell[stardist]
+```
+
+Additionally, TensorFlow needs to be installed for StarDist to perform segmentation. The CPU version (installed via `pip install tensorflow`) should suffice for the scale of work performed here.
 
 ## Usage and Documentation
 
