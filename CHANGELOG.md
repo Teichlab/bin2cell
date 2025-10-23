@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.4
+- StarDist moved to optional dependency group, global import removed
+- `b2c.stardist()` accepts optional custom model/axes, and prints out parameter overrides
+
 ## 0.3.3
 - `b2c.view_cell_labels()` to show cell-level metadata on the morphology segmentation
 
