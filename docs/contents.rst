@@ -3,5 +3,5 @@
    :caption: Table of Contents
 
    index
-   ../notebooks/demo.ipynb
+   notebooks/demo.ipynb
    segmentation
