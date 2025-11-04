@@ -4,4 +4,5 @@
 
    index
    notebooks/demo.ipynb
+   notebooks/destripe_celltypist.ipynb
    segmentation
