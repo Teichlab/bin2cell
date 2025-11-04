@@ -25,8 +25,8 @@ Additionally, TensorFlow needs to be installed for StarDist to perform segmentat
 **Please refer to the [demo notebook](https://bin2cell.readthedocs.io/en/latest/notebooks/demo.html).** Function docstrings are available on [ReadTheDocs](https://bin2cell.readthedocs.io/en/latest/). An additional notebook comparing destriped and non-destriped expression data can be accessed [here](https://bin2cell.readthedocs.io/en/latest/notebooks/destripe_celltypist.html).
 
 The repository also has notebooks comparing bin2cell output to standard 8um SpaceRanger output:
-- Mouse brain [bin2cell](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/docs/notebooks/N1_demo_b2c_mouse_brain_submission.ipynb) and [downstream analysis](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/docs/notebooks/N2_demo_analysis_mouse_brain_submission.ipynb)
-- Human colorectal cancer [bin2cell](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/docs/notebooks/N1_demo_b2c_crc_submission.ipynb) and [downstream analysis](https://nbviewer.org/github/Teichlab/bin2cell/blob/main/docs/notebooks/N2_demo_analysis_crc_public.ipynb)
+- Mouse brain [bin2cell](https://github.com/Teichlab/bin2cell/blob/main/docs/notebooks/N1_demo_b2c_mouse_brain_submission.ipynb) and [downstream analysis](https://github.com/Teichlab/bin2cell/blob/main/docs/notebooks/N2_demo_analysis_mouse_brain_submission.ipynb)
+- Human colorectal cancer [bin2cell](https://github.com/Teichlab/bin2cell/blob/main/docs/notebooks/N1_demo_b2c_crc_submission.ipynb) and [downstream analysis](https://github.com/Teichlab/bin2cell/blob/main/docs/notebooks/N2_demo_analysis_crc_public.ipynb)
 
 ## Using bin2cell output from R
 
