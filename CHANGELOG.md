@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.5
+- update `b2c.destripe_counts()` to work with newer pandas
+
 ## 0.3.4
 - StarDist moved to optional dependency group, global import removed
 - `b2c.stardist()` accepts optional custom model/axes, and prints out parameter overrides
