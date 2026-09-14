@@ -792,7 +792,7 @@ def destripe_counts(adata, counts_key="n_counts", adjusted_counts_key="n_counts_
     sc._utils.view_to_actual(adata)
     #adjust the count matrix to have n_counts_adjusted sum per bin (row)
     #premultiplying by a diagonal matrix multiplies each row by a value: https://solitaryroad.com/c108.html
-    bin_scaling = scipy.sparse.diags(adata.obs[adjusted_counts_key]/adata.obs[counts_key])
+    bin_scaling = scipy.sparse.diags(adata.obs[adjusted_counts_key].values/adata.obs[counts_key].values)
     adata.X = bin_scaling.dot(adata.X)
 
 def destripe(adata, quantile=0.99, counts_key="n_counts", factor_key="destripe_factor", adjusted_counts_key="n_counts_adjusted", adjust_counts=True):
