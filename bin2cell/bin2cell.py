@@ -791,7 +791,7 @@ def destripe_counts(adata, counts_key="n_counts", adjusted_counts_key="n_counts_
     #if it is a view then weird stuff happens when you try to write to its .X
     sc._utils.view_to_actual(adata)
     #adjust the count matrix to have n_counts_adjusted sum per bin (row)
-    #premultiplying by a diagonal matrix multiplies each row by a value: https://solitaryroad.com/c108.html
+    #premultiplying by a diagonal matrix multiplies each row by a value: https://www.statlect.com/matrix-algebra/diagonal-matrix
     bin_scaling = scipy.sparse.diags(adata.obs[adjusted_counts_key].values/adata.obs[counts_key].values)
     adata.X = bin_scaling.dot(adata.X)
 
@@ -1582,7 +1582,7 @@ def bin_to_cell(adata, labels_key="labels_expanded", spatial_keys=["spatial"], d
     #need to bust out deepcopy here as otherwise altering the spot diameter gets back-propagated
     cell_adata.uns['spatial'] = deepcopy(adata.uns['spatial'])
     #getting the centroids (means of bin coords) involves computing a mean of each cell_to_bin row
-    #premultiplying by a diagonal matrix multiplies each row by a value: https://solitaryroad.com/c108.html
+    #premultiplying by a diagonal matrix multiplies each row by a value: https://www.statlect.com/matrix-algebra/diagonal-matrix
     #use that to divide each row by it sum (.sum(axis=1)), then matrix multiply the result by bin coords
     #stash the sum into a separate variable for subsequent object storage
     #cell-cell * cell-bin * bin-coord = cell-coord
